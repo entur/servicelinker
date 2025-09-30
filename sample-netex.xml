@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+    <PublicationTimestamp>2025-09-05T10:00:00Z</PublicationTimestamp>
+    <ParticipantRef>NO:Codespace:NSR</ParticipantRef>
+    <dataObjects>
+        <CompositeFrame id="NO:CompositeFrame:1" version="1">
+            <validityConditions>
+                <ValidBetween>
+                    <FromDate>2025-01-01T00:00:00Z</FromDate>
+                    <ToDate>2025-12-31T23:59:59Z</ToDate>
+                </ValidBetween>
+            </validityConditions>
+            <frames>
+                <ServiceFrame id="NO:ServiceFrame:1" version="1">
+                    <scheduledStopPoints>
+                        <ScheduledStopPoint id="NO:StopPoint:1" version="1">
+                            <Name>Oslo Central Station</Name>
+                            <Location>
+                                <Longitude>10.7522</Longitude>
+                                <Latitude>59.9139</Latitude>
+                            </Location>
+                            <TransportMode>rail</TransportMode>
+                        </ScheduledStopPoint>
+                        <ScheduledStopPoint id="NO:StopPoint:2" version="1">
+                            <Name>Lillestrøm Station</Name>
+                            <Location>
+                                <Longitude>11.0464</Longitude>
+                                <Latitude>59.9556</Latitude>
+                            </Location>
+                            <TransportMode>rail</TransportMode>
+                        </ScheduledStopPoint>
+                        <ScheduledStopPoint id="NO:StopPoint:3" version="1">
+                            <Name>Drammen Station</Name>
+                            <Location>
+                                <Longitude>10.2044</Longitude>
+                                <Latitude>59.7434</Latitude>
+                            </Location>
+                            <TransportMode>rail</TransportMode>
+                        </ScheduledStopPoint>
+                    </scheduledStopPoints>
+                    <!-- ServiceLinks will be added here by the processor -->
+                    <serviceLinks>
+                        <!-- Existing service link that should not be overwritten -->
+                        <ServiceLink id="EXISTING_SL_1" version="1">
+                            <FromPointRef ref="NO:StopPoint:1"/>
+                            <ToPointRef ref="NO:StopPoint:2"/>
+                            <Distance>25000</Distance>
+                        </ServiceLink>
+                    </serviceLinks>
+                </ServiceFrame>
+            </frames>
+        </CompositeFrame>
+    </dataObjects>
+</PublicationDelivery>
+
