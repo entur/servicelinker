@@ -267,11 +267,11 @@ class NetexProcessor(
             listOf(pair.from.coordinate.longitude.toDouble(), pair.from.coordinate.latitude.toDouble()),
             listOf(pair.to.coordinate.longitude.toDouble(), pair.to.coordinate.latitude.toDouble())
         )
-        for (coord in coordinates) {
-            val pos = document.createElementNS("http://www.opengis.net/gml", "gml:pos")
-            pos.textContent = "${coord[1]} ${coord[0]}" // [lat lon]
-            gmlLineString.appendChild(pos)
-        }
+        // Build posList string: "lat1 lon1 lat2 lon2 ..."
+        val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
+        val posList = document.createElementNS("http://www.opengis.net/gml", "gml:posList")
+        posList.textContent = posListString
+        gmlLineString.appendChild(posList)
         linkSequenceProjection.appendChild(gmlLineString)
         projectionsElement.appendChild(linkSequenceProjection)
         serviceLinkElement.appendChild(projectionsElement)
