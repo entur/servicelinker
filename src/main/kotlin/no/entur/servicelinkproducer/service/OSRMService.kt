@@ -1,12 +1,14 @@
 package no.entur.servicelinkproducer.service
 
 import mu.KotlinLogging
-import no.entur.servicelinkproducer.model.*
+import no.entur.servicelinkproducer.model.Coordinate
+import no.entur.servicelinkproducer.model.OSRMResponse
+import no.entur.servicelinkproducer.model.OSRMRoute
+import no.entur.servicelinkproducer.model.TransportMode
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBody
-import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 
 @Service
@@ -34,16 +36,13 @@ class OSRMService(
 
         return try {
             val profile = getOSRMProfile(transportMode)
-            val coordinates = listOf(
-                listOf(from.longitude, from.latitude),
-                listOf(to.longitude, to.latitude)
-            )
+            val coordinates = "$from;$to"
 
             logger.debug { "Calculating route from $from to $to using profile $profile" }
 
             val response = webClient.get()
                 .uri("/route/v1/$profile/{coordinates}?overview=full&geometries=geojson") { uriBuilder ->
-                    uriBuilder.build(coordinates.flatten().joinToString(","))
+                    uriBuilder.build(coordinates)
                 }
                 .retrieve()
                 .awaitBody<OSRMResponse>()

@@ -1,5 +1,6 @@
 package no.entur.servicelinkproducer.service
 
+import io.mockk.mockk
 import no.entur.servicelinkproducer.model.Coordinate
 import no.entur.servicelinkproducer.model.StopPoint
 import no.entur.servicelinkproducer.model.TransportMode
@@ -12,7 +13,8 @@ class NetexProcessorTest {
 
     @Test
     fun `should process basic NeTEx file structure`() {
-        val netexProcessor = NetexProcessor("TEST_")
+        val mockOsrmService = mockk<OSRMService>(relaxed = true)
+        val netexProcessor = NetexProcessor("TEST_", mockOsrmService)
 
         val sampleNetex = """
             <?xml version="1.0" encoding="UTF-8"?>

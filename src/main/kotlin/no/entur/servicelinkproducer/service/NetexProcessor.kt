@@ -46,39 +46,6 @@ class NetexProcessor(
         return Pair(modifiedXml, addedCount)
     }
 
-    suspend fun processNetexFileWithRoutes(inputStream: InputStream): Pair<ByteArray, Int> {
-        logger.info { "Starting NeTEx file processing with OSRM routes" }
-        val document = parseXmlDocument(inputStream)
-        val stopPoints = extractStopPoints(document)
-        val existingServiceLinks = extractExistingServiceLinks(document)
-        val stationPairs = generateStationPairs(stopPoints, existingServiceLinks)
-        logger.info { "Generated ${stationPairs.size} station pairs that need service links" }
-        var addedCount = 0
-        // Find or create ServiceLinks section
-        var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
-        if (serviceLinksSection == null) {
-            val commonFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
-                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
-                ?: document.documentElement
-            serviceLinksSection = document.createElement("serviceLinks")
-            commonFrame.appendChild(serviceLinksSection)
-        }
-        for (pair in stationPairs) {
-            val route = try {
-                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
-            } catch (e: Exception) {
-                logger.warn(e) { "OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}" }
-                null
-            }
-            val serviceLinkElement = createServiceLinkElementWithRoute(document, pair, route)
-            serviceLinksSection.appendChild(serviceLinkElement)
-            addedCount++
-        }
-        val modifiedXml = documentToByteArray(document)
-        logger.info { "NeTEx processing completed. Added $addedCount service links" }
-        return Pair(modifiedXml, addedCount)
-    }
-
     private fun parseXmlDocument(inputStream: InputStream): Document {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
@@ -310,6 +277,49 @@ class NetexProcessor(
         serviceLinkElement.appendChild(projectionsElement)
 
         return serviceLinkElement
+    }
+
+    private fun ensureGmlNamespace(document: Document) {
+        val root = document.documentElement
+        val gmlNamespace = "http://www.opengis.net/gml"
+        val hasGmlNamespace = root.hasAttribute("xmlns:gml")
+        if (!hasGmlNamespace) {
+            root.setAttribute("xmlns:gml", gmlNamespace)
+        }
+    }
+
+    suspend fun processNetexFileWithRoutes(inputStream: InputStream): Pair<ByteArray, Int> {
+        logger.info { "Starting NeTEx file processing with OSRM routes" }
+        val document = parseXmlDocument(inputStream)
+        val stopPoints = extractStopPoints(document)
+        val existingServiceLinks = extractExistingServiceLinks(document)
+        val stationPairs = generateStationPairs(stopPoints, existingServiceLinks)
+        logger.info { "Generated ${stationPairs.size} station pairs that need service links" }
+        var addedCount = 0
+        // Find or create ServiceLinks section
+        var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
+        if (serviceLinksSection == null) {
+            val commonFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
+                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
+                ?: document.documentElement
+            serviceLinksSection = document.createElement("serviceLinks")
+            commonFrame.appendChild(serviceLinksSection)
+        }
+        for (pair in stationPairs) {
+            val route = try {
+                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
+            } catch (e: Exception) {
+                logger.warn(e) { "OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}" }
+                null
+            }
+            val serviceLinkElement = createServiceLinkElementWithRoute(document, pair, route)
+            serviceLinksSection.appendChild(serviceLinkElement)
+            addedCount++
+        }
+        ensureGmlNamespace(document)
+        val modifiedXml = documentToByteArray(document)
+        logger.info { "NeTEx processing completed. Added $addedCount service links" }
+        return Pair(modifiedXml, addedCount)
     }
 
     private fun extractTransportMode(element: Element): TransportMode? {

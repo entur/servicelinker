@@ -48,7 +48,7 @@ class ServiceLinkController(
     }
 
     @PostMapping("/process-xml-multipart", consumes = ["multipart/form-data"], produces = ["application/xml"])
-    fun processXmlFileUpload(
+    suspend fun processXmlFileUpload(
         @RequestParam("file") file: org.springframework.web.multipart.MultipartFile
     ): ResponseEntity<String> {
         logger.info { "Manual XML file upload processing request for file: ${file.originalFilename}" }
