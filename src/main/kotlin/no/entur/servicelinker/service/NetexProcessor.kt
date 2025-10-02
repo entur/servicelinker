@@ -1,7 +1,7 @@
 package no.entur.servicelinker.service
 
-import mu.KotlinLogging
 import no.entur.servicelinker.model.*
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import org.w3c.dom.Document
@@ -20,25 +20,25 @@ import kotlin.math.sin
 class NetexProcessor(
     @Autowired private val osrmService: OSRMService
 ) {
-    private val logger = KotlinLogging.logger {}
+    private val logger = LoggerFactory.getLogger(NetexProcessor::class.java)
 
     fun processNetexFile(inputStream: InputStream): Pair<ByteArray, Int> {
-        logger.info { "Starting NeTEx file processing" }
+        logger.info("Starting NeTEx file processing")
 
         val document = parseXmlDocument(inputStream)
         val stopPoints = extractStopPoints(document)
         val existingServiceLinks = extractExistingServiceLinks(document)
 
-        logger.info { "Found ${stopPoints.size} stop points and ${existingServiceLinks.size} existing service links" }
+        logger.info("Found ${stopPoints.size} stop points and ${existingServiceLinks.size} existing service links")
 
         val stationPairs = generateStationPairs(stopPoints, existingServiceLinks)
-        logger.info { "Generated ${stationPairs.size} station pairs that need service links" }
+        logger.info("Generated ${stationPairs.size} station pairs that need service links")
 
         val addedCount = addServiceLinksToDocument(document, stationPairs)
 
         val modifiedXml = documentToByteArray(document)
 
-        logger.info { "NeTEx processing completed. Added $addedCount service links" }
+        logger.info("NeTEx processing completed. Added $addedCount service links")
         return Pair(modifiedXml, addedCount)
     }
 
@@ -94,7 +94,7 @@ class NetexProcessor(
             }
             null
         } catch (e: Exception) {
-            logger.warn(e) { "Failed to parse stop point from element" }
+            logger.warn("Failed to parse stop point from element", e)
             null
         }
     }
@@ -121,7 +121,7 @@ class NetexProcessor(
             }
             null
         } catch (e: Exception) {
-            logger.warn(e) { "Failed to parse stop place from element" }
+            logger.warn("Failed to parse stop place from element", e)
             null
         }
     }
@@ -300,12 +300,12 @@ class NetexProcessor(
     }
 
     suspend fun processNetexFileWithRoutes(inputStream: InputStream): Pair<ByteArray, Int> {
-        logger.info { "Starting NeTEx file processing with OSRM routes" }
+        logger.info("Starting NeTEx file processing with OSRM routes")
         val document = parseXmlDocument(inputStream)
         val stopPoints = extractStopPoints(document)
         val existingServiceLinks = extractExistingServiceLinks(document)
         val stationPairs = generateStationPairs(stopPoints, existingServiceLinks)
-        logger.info { "Generated ${stationPairs.size} station pairs that need service links" }
+        logger.info("Generated ${stationPairs.size} station pairs that need service links")
         var addedCount = 0
         // Find or create ServiceLinks section
         var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
@@ -320,7 +320,7 @@ class NetexProcessor(
             val route = try {
                 osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
             } catch (e: Exception) {
-                logger.warn(e) { "OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}" }
+                logger.warn("OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}", e)
                 null
             }
             val serviceLinkElement = createServiceLinkElementWithRoute(document, pair, route)
@@ -329,7 +329,7 @@ class NetexProcessor(
         }
         ensureGmlNamespace(document)
         val modifiedXml = documentToByteArray(document)
-        logger.info { "NeTEx processing completed. Added $addedCount service links" }
+        logger.info("NeTEx processing completed. Added $addedCount service links")
         return Pair(modifiedXml, addedCount)
     }
 

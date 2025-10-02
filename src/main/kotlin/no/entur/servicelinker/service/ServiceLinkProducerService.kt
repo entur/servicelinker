@@ -1,20 +1,20 @@
 package no.entur.servicelinker.service
 
-import mu.KotlinLogging
 import no.entur.servicelinker.model.*
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
 @Service
-class ServicelinkerService(
+class ServiceLinkProducerService(
     private val gcsService: GcsService,
     private val netexProcessor: NetexProcessor,
     private val osrmService: OSRMService
 ) {
-    private val logger = KotlinLogging.logger {}
+    private val logger = LoggerFactory.getLogger(ServiceLinkProducerService::class.java)
 
     fun processNetexFile(request: ProcessingRequest): ProcessingResult {
         return try {
-            logger.info { "Starting ServiceLink production for file: ${request.gcsFilePath}" }
+            logger.info("Starting ServiceLink production for file: ${request.gcsFilePath}")
 
             // Validate input file exists
             if (!gcsService.fileExists(request.gcsFilePath)) {
@@ -39,7 +39,7 @@ class ServicelinkerService(
                 val (processedXml, addedCount) = netexProcessor.processNetexFile(stream)
 
                 if (addedCount == 0) {
-                    logger.info { "No ServiceLinks needed to be added for file: ${request.gcsFilePath}" }
+                    logger.info("No ServiceLinks needed to be added for file: ${request.gcsFilePath}")
                     return ProcessingResult(
                         success = true,
                         outputFilePath = request.gcsFilePath, // Return original file path
@@ -55,7 +55,7 @@ class ServicelinkerService(
                 )
 
                 if (outputPath != null) {
-                    logger.info { "Successfully processed file. Added $addedCount ServiceLinks. Output: $outputPath" }
+                    logger.info("Successfully processed file. Added $addedCount ServiceLinks. Output: $outputPath")
                     ProcessingResult(
                         success = true,
                         outputFilePath = outputPath,
@@ -71,7 +71,7 @@ class ServicelinkerService(
                 }
             }
         } catch (e: Exception) {
-            logger.error(e) { "Error processing NeTEx file: ${request.gcsFilePath}" }
+            logger.error("Error processing NeTEx file: ${request.gcsFilePath}", e)
             ProcessingResult(
                 success = false,
                 outputFilePath = null,
@@ -83,7 +83,7 @@ class ServicelinkerService(
 
     fun processXmlContent(xmlContent: String, filename: String, outputBucket: String? = null): ProcessingResult {
         return try {
-            logger.info { "Starting ServiceLink production for XML content: $filename" }
+            logger.info("Starting ServiceLink production for XML content: $filename")
 
             // Process the XML content directly
             val inputStream = xmlContent.byteInputStream(Charsets.UTF_8)
@@ -92,7 +92,7 @@ class ServicelinkerService(
                 val (processedXml, addedCount) = netexProcessor.processNetexFile(stream)
 
                 if (addedCount == 0) {
-                    logger.info { "No ServiceLinks needed to be added for file: $filename" }
+                    logger.info("No ServiceLinks needed to be added for file: $filename")
                     return ProcessingResult(
                         success = true,
                         outputFilePath = null, // No file was uploaded since no changes were made
@@ -108,7 +108,7 @@ class ServicelinkerService(
                 )
 
                 if (outputPath != null) {
-                    logger.info { "Successfully processed XML content. Added $addedCount ServiceLinks. Output: $outputPath" }
+                    logger.info("Successfully processed XML content. Added $addedCount ServiceLinks. Output: $outputPath")
                     ProcessingResult(
                         success = true,
                         outputFilePath = outputPath,
@@ -124,7 +124,7 @@ class ServicelinkerService(
                 }
             }
         } catch (e: Exception) {
-            logger.error(e) { "Error processing XML content: $filename" }
+            logger.error("Error processing XML content: $filename", e)
             ProcessingResult(
                 success = false,
                 outputFilePath = null,
@@ -136,11 +136,11 @@ class ServicelinkerService(
 
     suspend fun processXmlContentDirectly(xmlContent: String, filename: String): DirectProcessingResult {
         return try {
-            logger.info { "Starting direct ServiceLink production for XML content: $filename" }
+            logger.info("Starting direct ServiceLink production for XML content: $filename")
             val inputStream = xmlContent.byteInputStream(Charsets.UTF_8)
             inputStream.use { stream ->
                 val (processedXml, addedCount) = netexProcessor.processNetexFileWithRoutes(stream)
-                logger.info { "Successfully processed XML content. Added $addedCount ServiceLinks for file: $filename" }
+                logger.info("Successfully processed XML content. Added $addedCount ServiceLinks for file: $filename")
                 DirectProcessingResult(
                     success = true,
                     processedXml = String(processedXml, Charsets.UTF_8),
@@ -148,7 +148,7 @@ class ServicelinkerService(
                 )
             }
         } catch (e: Exception) {
-            logger.error(e) { "Error processing XML content directly: $filename" }
+            logger.error("Error processing XML content directly: $filename", e)
             DirectProcessingResult(
                 success = false,
                 processedXml = null,
@@ -185,9 +185,9 @@ class ServicelinkerService(
 
                 serviceLinks.add(serviceLink)
 
-                logger.debug { "Created ServiceLink ${serviceLink.id} with ${coordinates.size} coordinates" }
+                logger.debug("Created ServiceLink ${serviceLink.id} with ${coordinates.size} coordinates")
             } catch (e: Exception) {
-                logger.warn(e) { "Failed to enhance ServiceLink for pair ${pair.from.id} -> ${pair.to.id}" }
+                logger.warn("Failed to enhance ServiceLink for pair ${pair.from.id} -> ${pair.to.id}", e)
 
                 // Create basic ServiceLink without routing data
                 val serviceLink = ServiceLink(
@@ -213,6 +213,6 @@ class ServicelinkerService(
 
     fun clearRoutingCache() {
         osrmService.clearCache()
-        logger.info { "Routing cache cleared" }
+        logger.info("Routing cache cleared")
     }
 }

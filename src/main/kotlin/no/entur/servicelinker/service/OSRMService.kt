@@ -1,10 +1,10 @@
 package no.entur.servicelinker.service
 
-import mu.KotlinLogging
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMResponse
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.TransportMode
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Service
@@ -20,7 +20,7 @@ class OSRMService(
     @Value("\${osrm.timeout}") private val timeoutMs: Long,
     @Value("\${servicelink.cache-routes}") private val cacheRoutes: Boolean
 ) {
-    private val logger = KotlinLogging.logger {}
+    private val logger = LoggerFactory.getLogger(OSRMService::class.java)
     private val webClient = WebClient.builder()
         .baseUrl(osrmBaseUrl)
         .clientConnector(
@@ -39,7 +39,7 @@ class OSRMService(
 
         cacheKey?.let { key ->
             routeCache[key]?.let { cachedRoute ->
-                logger.debug { "Using cached route for $key" }
+                logger.debug("Using cached route for $key")
                 return cachedRoute
             }
         }
@@ -48,7 +48,7 @@ class OSRMService(
             val profile = getOSRMProfile(transportMode)
             val coordinates = "$from;$to"
 
-            logger.debug { "Calculating route from $from to $to using profile $profile" }
+            logger.debug("Calculating route from $from to $to using profile $profile")
 
             val response = webClient.get()
                 .uri("/route/v1/$profile/{coordinates}?overview=full&geometries=geojson") { uriBuilder ->
@@ -61,12 +61,12 @@ class OSRMService(
 
             if (route != null && cacheKey != null) {
                 routeCache[cacheKey] = route
-                logger.debug { "Cached route for $cacheKey, distance: ${route.distance}m" }
+                logger.debug("Cached route for $cacheKey, distance: ${route.distance}m")
             }
 
             route
         } catch (e: Exception) {
-            logger.error(e) { "Failed to calculate route from $from to $to" }
+            logger.error("Failed to calculate route from $from to $to", e)
             null
         }
     }
@@ -83,7 +83,7 @@ class OSRMService(
 
     fun clearCache() {
         routeCache.clear()
-        logger.info { "Route cache cleared" }
+        logger.info("Route cache cleared")
     }
 
     fun getCacheSize(): Int = routeCache.size

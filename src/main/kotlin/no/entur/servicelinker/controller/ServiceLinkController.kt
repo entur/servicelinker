@@ -1,25 +1,24 @@
 package no.entur.servicelinker.controller
 
-import mu.KotlinLogging
 import no.entur.servicelinker.model.ProcessingRequest
 import no.entur.servicelinker.model.ProcessingResult
-import no.entur.servicelinker.model.DirectProcessingResult
-import no.entur.servicelinker.service.ServicelinkerService
+import no.entur.servicelinker.service.ServiceLinkProducerService
+import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
 @RestController
 @RequestMapping("/api/servicelink")
 class ServiceLinkController(
-    private val servicelinkerService: ServicelinkerService
+    private val serviceLinkProducerService: ServiceLinkProducerService
 ) {
-    private val logger = KotlinLogging.logger {}
+    private val logger = LoggerFactory.getLogger(ServiceLinkController::class.java)
 
     @PostMapping("/process")
     fun processFile(@RequestBody request: ProcessingRequest): ResponseEntity<ProcessingResult> {
-        logger.info { "Manual processing request for file: ${request.gcsFilePath}" }
+        logger.info("Manual processing request for file: ${request.gcsFilePath}")
 
-        val result = servicelinkerService.processNetexFile(request)
+        val result = serviceLinkProducerService.processNetexFile(request)
 
         return if (result.success) {
             ResponseEntity.ok(result)
@@ -33,9 +32,9 @@ class ServiceLinkController(
         @RequestBody xmlContent: String,
         @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.xml"
     ): ResponseEntity<String> {
-        logger.info { "Manual XML processing request for file: $filename" }
+        logger.info("Manual XML processing request for file: $filename")
 
-        val result = servicelinkerService.processXmlContentDirectly(xmlContent, filename)
+        val result = serviceLinkProducerService.processXmlContentDirectly(xmlContent, filename)
 
         return if (result.success) {
             ResponseEntity.ok()
@@ -51,7 +50,7 @@ class ServiceLinkController(
     suspend fun processXmlFileUpload(
         @RequestParam("file") file: org.springframework.web.multipart.MultipartFile
     ): ResponseEntity<String> {
-        logger.info { "Manual XML file upload processing request for file: ${file.originalFilename}" }
+        logger.info("Manual XML file upload processing request for file: ${file.originalFilename}")
 
         if (file.isEmpty) {
             return ResponseEntity.badRequest()
@@ -66,7 +65,7 @@ class ServiceLinkController(
         }
 
         val filename = file.originalFilename ?: "upload_${System.currentTimeMillis()}.xml"
-        val result = servicelinkerService.processXmlContentDirectly(xmlContent, filename)
+        val result = serviceLinkProducerService.processXmlContentDirectly(xmlContent, filename)
 
         return if (result.success) {
             ResponseEntity.ok()
@@ -80,13 +79,13 @@ class ServiceLinkController(
 
     @GetMapping("/cache/stats")
     fun getCacheStatistics(): ResponseEntity<Map<String, Any>> {
-        val stats = servicelinkerService.getRoutingCacheStatistics()
+        val stats = serviceLinkProducerService.getRoutingCacheStatistics()
         return ResponseEntity.ok(stats)
     }
 
     @PostMapping("/cache/clear")
     fun clearCache(): ResponseEntity<Map<String, String>> {
-        servicelinkerService.clearRoutingCache()
+        serviceLinkProducerService.clearRoutingCache()
         return ResponseEntity.ok(mapOf("message" to "Cache cleared successfully"))
     }
 

@@ -3,7 +3,7 @@ package no.entur.servicelinker.service
 import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.BlobInfo
 import com.google.cloud.storage.Storage
-import mu.KotlinLogging
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.io.ByteArrayInputStream
@@ -17,15 +17,15 @@ class GcsService(
     @Value("\${gcs.bucket.input}") private val inputBucket: String,
     @Value("\${gcs.bucket.output}") private val outputBucket: String
 ) {
-    private val logger = KotlinLogging.logger {}
+    private val logger = LoggerFactory.getLogger(GcsService::class.java)
 
     fun downloadFile(gcsPath: String): InputStream? {
         return try {
-            logger.info { "Downloading file from GCS: $gcsPath" }
+            logger.info("Downloading file from GCS: $gcsPath")
 
             val parts = gcsPath.removePrefix("gs://").split("/", limit = 2)
             if (parts.size != 2) {
-                logger.error { "Invalid GCS path format: $gcsPath" }
+                logger.error("Invalid GCS path format: $gcsPath")
                 return null
             }
 
@@ -34,13 +34,13 @@ class GcsService(
 
             val blob = storage.get(BlobId.of(bucket, objectName))
             if (blob == null || !blob.exists()) {
-                logger.error { "File not found: $gcsPath" }
+                logger.error("File not found: $gcsPath")
                 return null
             }
 
             ByteArrayInputStream(blob.getContent())
         } catch (e: Exception) {
-            logger.error(e) { "Failed to download file from GCS: $gcsPath" }
+            logger.error("Failed to download file from GCS: $gcsPath", e)
             null
         }
     }
@@ -52,7 +52,7 @@ class GcsService(
             val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
             val outputFileName = "processed_${timestamp}_$originalFileName"
 
-            logger.info { "Uploading processed file to GCS: gs://$bucket/$outputFileName" }
+            logger.info("Uploading processed file to GCS: gs://$bucket/$outputFileName")
 
             val blobId = BlobId.of(bucket, outputFileName)
             val blobInfo = BlobInfo.newBuilder(blobId)
@@ -62,10 +62,10 @@ class GcsService(
             storage.create(blobInfo, content)
 
             val outputPath = "gs://$bucket/$outputFileName"
-            logger.info { "Successfully uploaded file to: $outputPath" }
+            logger.info("Successfully uploaded file to: $outputPath")
             outputPath
         } catch (e: Exception) {
-            logger.error(e) { "Failed to upload file to GCS" }
+            logger.error("Failed to upload file to GCS", e)
             null
         }
     }
@@ -76,7 +76,7 @@ class GcsService(
             val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
             val outputFileName = "processed_${timestamp}_$originalFileName"
 
-            logger.info { "Uploading processed XML to GCS: gs://$bucket/$outputFileName" }
+            logger.info("Uploading processed XML to GCS: gs://$bucket/$outputFileName")
 
             val blobId = BlobId.of(bucket, outputFileName)
             val blobInfo = BlobInfo.newBuilder(blobId)
@@ -86,10 +86,10 @@ class GcsService(
             storage.create(blobInfo, content)
 
             val outputPath = "gs://$bucket/$outputFileName"
-            logger.info { "Successfully uploaded XML to: $outputPath" }
+            logger.info("Successfully uploaded XML to: $outputPath")
             outputPath
         } catch (e: Exception) {
-            logger.error(e) { "Failed to upload XML to GCS" }
+            logger.error("Failed to upload XML to GCS", e)
             null
         }
     }
@@ -109,7 +109,7 @@ class GcsService(
             val blob = storage.get(BlobId.of(bucket, objectName))
             blob != null && blob.exists()
         } catch (e: Exception) {
-            logger.error(e) { "Failed to check if file exists: $gcsPath" }
+            logger.error("Failed to check if file exists: $gcsPath", e)
             false
         }
     }

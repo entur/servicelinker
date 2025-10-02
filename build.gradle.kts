@@ -1,7 +1,7 @@
 plugins {
 	kotlin("jvm") version "2.2.0"
 	kotlin("plugin.spring") version "2.2.0"
-	id("org.springframework.boot") version "4.0.0-M2"
+	id("org.springframework.boot") version "4.0.0-M3"
 	id("io.spring.dependency-management") version "1.1.7"
 }
 
@@ -37,7 +37,6 @@ dependencies {
 
 	implementation("org.springframework.integration:spring-integration-core")
 
-	implementation("io.github.microutils:kotlin-logging:3.0.5")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
