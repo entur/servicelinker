@@ -12,9 +12,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 import javax.xml.transform.TransformerFactory
 import javax.xml.transform.dom.DOMSource
 import javax.xml.transform.stream.StreamResult
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
+
 
 @Service
 class NetexProcessor(
@@ -52,7 +50,6 @@ class NetexProcessor(
     private fun extractStopPoints(document: Document): List<StopPoint> {
         val stopPoints = mutableListOf<StopPoint>()
 
-        // Extract ScheduledStopPoints
         val scheduledStopPoints = document.getElementsByTagName("ScheduledStopPoint")
         for (i in 0 until scheduledStopPoints.length) {
             val element = scheduledStopPoints.item(i) as Element
@@ -62,7 +59,6 @@ class NetexProcessor(
             }
         }
 
-        // Extract StopPlaces if present
         val stopPlaces = document.getElementsByTagName("StopPlace")
         for (i in 0 until stopPlaces.length) {
             val element = stopPlaces.item(i) as Element
@@ -158,7 +154,6 @@ class NetexProcessor(
                 val reversePairKey = "${to.id}_${from.id}"
 
                 if (!existingServiceLinks.contains(pairKey) && !existingServiceLinks.contains(reversePairKey)) {
-                    // Try to get OSRM route to check if connection is possible
                     val route = try {
                         osrmService.calculateRoute(from.coordinate, to.coordinate, from.transportMode)
                     } catch (e: Exception) {
@@ -166,7 +161,7 @@ class NetexProcessor(
                     }
 
                     // Only add pairs where OSRM can find a route (and distance is reasonable)
-                    if (route != null && route.distance <= 50000) {
+                    if (route != null && route.distance <= MAX_DISTANCE_METERS) {
                         pairs.add(StationPair(from, to))
                     }
                 }
@@ -365,5 +360,6 @@ class NetexProcessor(
 
     companion object {
         const val SRS_NAME_WGS84: String = "ESPG:4326"
+        const val MAX_DISTANCE_METERS = 50000
     }
 }
