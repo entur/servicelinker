@@ -263,7 +263,7 @@ class NetexProcessor(
         val gmlLineString = document.createElement( "gml:LineString")
         gmlLineString.setAttribute("srsName", SRS_NAME_WGS84)
         gmlLineString.setAttribute("gml:id", "lsp_${fromId}_${toId}")
-        val coordinates = route?.geometry?.coordinates ?: listOf(
+        val coordinates = route?.coordinates ?: listOf(
             listOf(pair.from.coordinate.longitude.toDouble(), pair.from.coordinate.latitude.toDouble()),
             listOf(pair.to.coordinate.longitude.toDouble(), pair.to.coordinate.latitude.toDouble())
         )

@@ -4,6 +4,7 @@ import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMResponse
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.TransportMode
+import no.entur.servicelinker.util.PolylineDecoder
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
@@ -51,7 +52,7 @@ class OSRMService(
             logger.debug("Calculating route from $from to $to using profile $profile")
 
             val response = webClient.get()
-                .uri("/route/v1/$profile/{coordinates}?alternatives=false&steps=false&overview=full&geometries=geojson") { uriBuilder ->
+                .uri("/route/v1/$profile/{coordinates}?alternatives=false&steps=false&overview=full&geometries=polyline") { uriBuilder ->
                     uriBuilder.build(coordinates)
                 }
                 .retrieve()
