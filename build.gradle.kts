@@ -37,6 +37,7 @@ dependencies {
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
 	implementation("org.springframework.integration:spring-integration-core")
+	implementation("com.google.maps:google-maps-services:2.2.0")
 
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")

@@ -2,13 +2,7 @@ package no.entur.servicelinker.model
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
-import no.entur.servicelinker.util.PolylineDecoder
-
-data class OSRMRequest(
-    val coordinates: List<List<Double>>,
-    val overview: String = "full",
-    val geometries: String = "geojson"
-)
+import com.google.maps.internal.PolylineEncoding
 
 data class OSRMResponse(
     val routes: List<OSRMRoute>
@@ -18,11 +12,11 @@ data class OSRMResponse(
 data class OSRMRoute(
     val distance: Double,
     val duration: Double,
-    val geometry: String
+    private val geometry: String
 ) {
     @get:JsonProperty(access = JsonProperty.Access.READ_ONLY)
     val coordinates: List<List<Double>>
-        get() = PolylineDecoder.decode(geometry)
+        get() = PolylineEncoding.decode(geometry).map { listOf(it.lng, it.lat) }
 }
 
 data class ProcessingRequest(
