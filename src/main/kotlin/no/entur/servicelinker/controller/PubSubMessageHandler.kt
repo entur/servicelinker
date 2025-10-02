@@ -24,7 +24,7 @@ class PubSubMessageHandler(
         // PubSub integration can be added later when properly configured
     }
 
-    fun processMessageFromString(messagePayload: String) {
+    suspend fun processMessageFromString(messagePayload: String) {
         try {
             logger.info("Processing message: $messagePayload")
 

@@ -1,6 +1,7 @@
 package no.entur.servicelinker.service
 
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.model.TransportMode
@@ -13,7 +14,7 @@ import java.io.ByteArrayInputStream
 class NetexProcessorTest {
 
     @Test
-    fun `should process basic NeTEx file structure`() {
+    fun `should process basic NeTEx file structure`() = runTest {
         val mockOsrmService = mockk<OSRMService>(relaxed = true)
         val netexProcessor = NetexProcessor(mockOsrmService)
 

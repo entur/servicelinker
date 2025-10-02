@@ -22,7 +22,7 @@ class NetexProcessor(
 ) {
     private val logger = LoggerFactory.getLogger(NetexProcessor::class.java)
 
-    fun processNetexFile(inputStream: InputStream): Pair<ByteArray, Int> {
+    suspend fun processNetexFile(inputStream: InputStream): Pair<ByteArray, Int> {
         logger.info("Starting NeTEx file processing")
 
         val document = parseXmlDocument(inputStream)
@@ -143,13 +143,12 @@ class NetexProcessor(
         return existingLinks
     }
 
-    private fun generateStationPairs(
+    private suspend fun generateStationPairs(
         stopPoints: List<StopPoint>,
         existingServiceLinks: Set<String>
     ): List<StationPair> {
         val pairs = mutableListOf<StationPair>()
 
-        // Generate pairs for stops that are close to each other and don't have existing service links
         for (i in stopPoints.indices) {
             for (j in i + 1 until stopPoints.size) {
                 val from = stopPoints[i]
@@ -159,10 +158,15 @@ class NetexProcessor(
                 val reversePairKey = "${to.id}_${from.id}"
 
                 if (!existingServiceLinks.contains(pairKey) && !existingServiceLinks.contains(reversePairKey)) {
-                    val distance = calculateDistance(from.coordinate, to.coordinate)
+                    // Try to get OSRM route to check if connection is possible
+                    val route = try {
+                        osrmService.calculateRoute(from.coordinate, to.coordinate, from.transportMode)
+                    } catch (e: Exception) {
+                        null
+                    }
 
-                    // Only create service links for stops within reasonable distance (e.g., 50km)
-                    if (distance <= 50000) {
+                    // Only add pairs where OSRM can find a route (and distance is reasonable)
+                    if (route != null && route.distance <= 50000) {
                         pairs.add(StationPair(from, to))
                     }
                 }
@@ -172,27 +176,11 @@ class NetexProcessor(
         return pairs
     }
 
-    private fun calculateDistance(coord1: Coordinate, coord2: Coordinate): Int {
-        val earthRadius = 6371000.0 // Earth radius in meters
-        val lat1Rad = Math.toRadians(coord1.latitude.toDouble())
-        val lat2Rad = Math.toRadians(coord2.latitude.toDouble())
-        val deltaLat = Math.toRadians(coord2.latitude.toDouble() - coord1.latitude.toDouble())
-        val deltaLon = Math.toRadians(coord2.longitude.toDouble() - coord1.longitude.toDouble())
 
-        val a = sin(deltaLat / 2) * sin(deltaLat / 2) +
-                cos(lat1Rad) * cos(lat2Rad) *
-                sin(deltaLon / 2) * sin(deltaLon / 2)
-        val c = 2 * atan2(Math.sqrt(a), Math.sqrt(1 - a))
-
-        return (earthRadius * c).toInt()
-    }
-
-    private fun addServiceLinksToDocument(document: Document, stationPairs: List<StationPair>): Int {
-        // Find or create ServiceLinks section
+    private suspend fun addServiceLinksToDocument(document: Document, stationPairs: List<StationPair>): Int {
         var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
 
         if (serviceLinksSection == null) {
-            // Find the appropriate parent element to add serviceLinks
             val commonFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
                 ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
                 ?: document.documentElement
@@ -204,7 +192,14 @@ class NetexProcessor(
         var addedCount = 0
 
         for (pair in stationPairs) {
-            val serviceLinkElement = createServiceLinkElement(document, pair)
+            val route = try {
+                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
+            } catch (e: Exception) {
+                logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}, using straight-line distance", e)
+                null
+            }
+
+            val serviceLinkElement = createServiceLinkElementWithDistance(document, pair, route?.distance?.toInt())
             serviceLinksSection.appendChild(serviceLinkElement)
             addedCount++
         }
@@ -212,7 +207,7 @@ class NetexProcessor(
         return addedCount
     }
 
-    private fun createServiceLinkElement(document: Document, pair: StationPair): Element {
+    private fun createServiceLinkElementWithDistance(document: Document, pair: StationPair, osrmDistance: Int?): Element {
         val serviceLinkId = pair.generateServiceLinkId("LS_")
 
         val serviceLinkElement = document.createElement("ServiceLink")
@@ -227,14 +222,15 @@ class NetexProcessor(
         toPointRef.setAttribute("ref", pair.to.id)
         serviceLinkElement.appendChild(toPointRef)
 
-        // Add distance if available
-        val distance = calculateDistance(pair.from.coordinate, pair.to.coordinate)
-        val distanceElement = document.createElement("Distance")
-        distanceElement.textContent = distance.toString()
-        serviceLinkElement.appendChild(distanceElement)
+        if (osrmDistance != null) {
+            val distanceElement = document.createElement("Distance")
+            distanceElement.textContent = osrmDistance.toString()
+            serviceLinkElement.appendChild(distanceElement)
+        }
 
         return serviceLinkElement
     }
+
 
     private fun createServiceLinkElementWithRoute(document: Document, pair: StationPair, route: OSRMRoute?): Element {
         val fromParts = pair.from.id.split(":")
@@ -252,10 +248,12 @@ class NetexProcessor(
         serviceLinkElement.setAttribute("id", serviceLinkId)
         serviceLinkElement.setAttribute("version", version)
 
-        val distance = route?.distance?.toInt() ?: calculateDistance(pair.from.coordinate, pair.to.coordinate)
-        val distanceElement = document.createElement("Distance")
-        distanceElement.textContent = distance.toString()
-        serviceLinkElement.appendChild(distanceElement)
+        // Only use OSRM distance, skip distance element if not available
+        if (route?.distance != null) {
+            val distanceElement = document.createElement("Distance")
+            distanceElement.textContent = route.distance.toInt().toString()
+            serviceLinkElement.appendChild(distanceElement)
+        }
 
         // Add projections with GML LineString
         val projectionsElement = document.createElement("projections")
@@ -307,7 +305,7 @@ class NetexProcessor(
         val stationPairs = generateStationPairs(stopPoints, existingServiceLinks)
         logger.info("Generated ${stationPairs.size} station pairs that need service links")
         var addedCount = 0
-        // Find or create ServiceLinks section
+
         var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
         if (serviceLinksSection == null) {
             val commonFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
