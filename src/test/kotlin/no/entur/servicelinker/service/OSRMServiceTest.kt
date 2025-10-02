@@ -1,49 +1,74 @@
 package no.entur.servicelinker.service
 
-import kotlinx.coroutines.runBlocking
+import com.github.tomakehurst.wiremock.WireMockServer
+import com.github.tomakehurst.wiremock.client.WireMock.*
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration
+import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.TransportMode
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.test.context.TestPropertySource
+import org.springframework.core.io.ClassPathResource
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
-@SpringBootTest
-@TestPropertySource(properties = [
-    "osrm.base-url=http://mock-osrm.example.com",
-    "osrm.timeout=5000",
-    "servicelink.cache-routes=true"
-])
 class OSRMServiceTest {
 
-    @Test
-    fun `should handle route calculation for bus transport mode`() = runBlocking {
-        val osrmService = OSRMService(
-            osrmBaseUrl = "http://mock-osrm.example.com",
+    private lateinit var wireMockServer: WireMockServer
+    private lateinit var osrmService: OSRMService
+
+    @BeforeEach
+    fun setUp() {
+        wireMockServer = WireMockServer(WireMockConfiguration.options().port(8089))
+        wireMockServer.start()
+
+        osrmService = OSRMService(
+            osrmBaseUrl = "http://localhost:8089",
             timeoutMs = 5000,
-            cacheRoutes = true
+            cacheRoutes = false
         )
+    }
 
-        val from = Coordinate(59.9139, 10.7522) // Oslo
-        val to = Coordinate(59.9127, 10.7460) // Near Oslo
-
-        // This will fail in test environment without actual OSRM service
-        // but tests the service structure
-        val result = osrmService.calculateRoute(from, to, TransportMode.BUS)
-        // In a real test, we would mock the WebClient
+    @AfterEach
+    fun tearDown() {
+        wireMockServer.stop()
     }
 
     @Test
-    fun `should cache routes when enabled`() {
-        val osrmService = OSRMService(
-            osrmBaseUrl = "http://mock-osrm.example.com",
-            timeoutMs = 5000,
-            cacheRoutes = true
+    fun `should calculate route using real OSRM response data`() = runTest {
+        val resource = ClassPathResource("sample-osrm-result.json")
+        val rawOsrmJson = resource.inputStream.bufferedReader().use { it.readText() }
+
+        wireMockServer.stubFor(
+            get(urlPathMatching("/route/v1/driving/.*"))
+                .willReturn(
+                    aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(rawOsrmJson)
+                )
         )
 
-        val initialCacheSize = osrmService.getCacheSize()
-        assert(initialCacheSize == 0)
+        val from = Coordinate(59.913953, 10.75261)
+        val to = Coordinate(59.955648, 11.046175)
+
+        val route = osrmService.calculateRoute(from, to, TransportMode.BUS)
+
+        assertNotNull(route)
+        assertEquals(20842.6, route.distance)
+        assertEquals(1341.1, route.duration)
+
+        wireMockServer.verify(
+            getRequestedFor(urlPathMatching("/route/v1/driving/.*"))
+        )
+    }
+
+    @Test
+    fun `should initialize OSRM service with correct cache behavior`() {
+        assertEquals(0, osrmService.getCacheSize())
 
         osrmService.clearCache()
-        assert(osrmService.getCacheSize() == 0)
+        assertEquals(0, osrmService.getCacheSize())
     }
 }

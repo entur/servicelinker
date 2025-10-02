@@ -51,7 +51,7 @@ class OSRMService(
             logger.debug("Calculating route from $from to $to using profile $profile")
 
             val response = webClient.get()
-                .uri("/route/v1/$profile/{coordinates}?overview=full&geometries=geojson") { uriBuilder ->
+                .uri("/route/v1/$profile/{coordinates}?alternatives=false&steps=false&overview=full&geometries=geojson") { uriBuilder ->
                     uriBuilder.build(coordinates)
                 }
                 .retrieve()
