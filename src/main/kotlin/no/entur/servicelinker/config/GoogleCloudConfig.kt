@@ -1,4 +1,4 @@
-package no.entur.servicelinkproducer.config
+package no.entur.servicelinker.config
 
 import com.google.cloud.storage.Storage
 import com.google.cloud.storage.StorageOptions

@@ -1,27 +1,23 @@
-package no.entur.servicelinkproducer.service
+package no.entur.servicelinker.service
 
-import com.fasterxml.jackson.dataformat.xml.XmlMapper
-import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import mu.KotlinLogging
-import no.entur.servicelinkproducer.model.*
+import no.entur.servicelinker.model.*
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.w3c.dom.Document
 import org.w3c.dom.Element
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import javax.xml.parsers.DocumentBuilderFactory
 import javax.xml.transform.TransformerFactory
 import javax.xml.transform.dom.DOMSource
 import javax.xml.transform.stream.StreamResult
-import java.io.ByteArrayOutputStream
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 
 @Service
 class NetexProcessor(
-    @Value("\${servicelink.id-prefix}") private val serviceLinkIdPrefix: String,
     @Autowired private val osrmService: OSRMService
 ) {
     private val logger = KotlinLogging.logger {}
@@ -82,6 +78,7 @@ class NetexProcessor(
     private fun parseStopPoint(element: Element): StopPoint? {
         return try {
             val id = element.getAttribute("id")
+            val version = element.getAttribute("version")
             val name = getElementText(element, "Name") ?: getElementText(element, "ShortName")
             val location = element.getElementsByTagName("Location").item(0) as? Element
 
@@ -92,7 +89,7 @@ class NetexProcessor(
                 if (longitude != null && latitude != null) {
                     val coordinate = Coordinate(latitude, longitude)
                     val transportMode = extractTransportMode(element)
-                    return StopPoint(id, name, coordinate, transportMode)
+                    return StopPoint(id, name, coordinate, transportMode, version)
                 }
             }
             null
@@ -105,6 +102,7 @@ class NetexProcessor(
     private fun parseStopPlace(element: Element): StopPoint? {
         return try {
             val id = element.getAttribute("id")
+            val version = element.getAttribute("version")
             val name = getElementText(element, "Name")
             val centroid = element.getElementsByTagName("Centroid").item(0) as? Element
 
@@ -117,7 +115,7 @@ class NetexProcessor(
                     if (longitude != null && latitude != null) {
                         val coordinate = Coordinate(latitude, longitude)
                         val transportMode = extractTransportMode(element)
-                        return StopPoint(id, name, coordinate, transportMode)
+                        return StopPoint(id, name, coordinate, transportMode, version)
                     }
                 }
             }
@@ -145,7 +143,10 @@ class NetexProcessor(
         return existingLinks
     }
 
-    private fun generateStationPairs(stopPoints: List<StopPoint>, existingServiceLinks: Set<String>): List<StationPair> {
+    private fun generateStationPairs(
+        stopPoints: List<StopPoint>,
+        existingServiceLinks: Set<String>
+    ): List<StationPair> {
         val pairs = mutableListOf<StationPair>()
 
         // Generate pairs for stops that are close to each other and don't have existing service links
@@ -212,7 +213,7 @@ class NetexProcessor(
     }
 
     private fun createServiceLinkElement(document: Document, pair: StationPair): Element {
-        val serviceLinkId = pair.generateServiceLinkId(serviceLinkIdPrefix)
+        val serviceLinkId = pair.generateServiceLinkId("LS_")
 
         val serviceLinkElement = document.createElement("ServiceLink")
         serviceLinkElement.setAttribute("id", serviceLinkId)
@@ -236,19 +237,20 @@ class NetexProcessor(
     }
 
     private fun createServiceLinkElementWithRoute(document: Document, pair: StationPair, route: OSRMRoute?): Element {
-        val serviceLinkId = pair.generateServiceLinkId(serviceLinkIdPrefix)
+        val fromParts = pair.from.id.split(":")
+        val toParts = pair.to.id.split(":")
+        val tariffZone = fromParts.first()
+        val fromId = fromParts.lastOrNull() ?: pair.from.id
+        val toId = toParts.lastOrNull() ?: pair.to.id
+        val version = "1"
+        val timestamp =
+            java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(java.time.LocalDateTime.now())
+        val serviceLinkId = "$tariffZone:ServiceLink:$fromId-$toId"
+        val linkSequenceProjectionId = "$tariffZone:LinkSequenceProjection:${timestamp}_${fromId}_${toId}"
 
         val serviceLinkElement = document.createElement("ServiceLink")
         serviceLinkElement.setAttribute("id", serviceLinkId)
-        serviceLinkElement.setAttribute("version", "1")
-
-        val fromPointRef = document.createElement("FromPointRef")
-        fromPointRef.setAttribute("ref", pair.from.id)
-        serviceLinkElement.appendChild(fromPointRef)
-
-        val toPointRef = document.createElement("ToPointRef")
-        toPointRef.setAttribute("ref", pair.to.id)
-        serviceLinkElement.appendChild(toPointRef)
+        serviceLinkElement.setAttribute("version", version)
 
         val distance = route?.distance?.toInt() ?: calculateDistance(pair.from.coordinate, pair.to.coordinate)
         val distanceElement = document.createElement("Distance")
@@ -258,23 +260,32 @@ class NetexProcessor(
         // Add projections with GML LineString
         val projectionsElement = document.createElement("projections")
         val linkSequenceProjection = document.createElement("LinkSequenceProjection")
-        linkSequenceProjection.setAttribute("id", "${serviceLinkId.replace(":sl:",":lsp:")}")
+        linkSequenceProjection.setAttribute("id", linkSequenceProjectionId)
         linkSequenceProjection.setAttribute("version", "1")
-        val gmlLineString = document.createElementNS("http://www.opengis.net/gml", "gml:LineString")
-        gmlLineString.setAttribute("srsName", "WGS84")
-        gmlLineString.setAttribute("gml:id", "lsp_${pair.from.id}_${pair.to.id}")
+        val gmlLineString = document.createElement( "gml:LineString")
+        gmlLineString.setAttribute("srsName", SRS_NAME_WGS84)
+        gmlLineString.setAttribute("gml:id", "lsp_${fromId}_${toId}")
         val coordinates = route?.geometry?.coordinates ?: listOf(
             listOf(pair.from.coordinate.longitude.toDouble(), pair.from.coordinate.latitude.toDouble()),
             listOf(pair.to.coordinate.longitude.toDouble(), pair.to.coordinate.latitude.toDouble())
         )
-        // Build posList string: "lat1 lon1 lat2 lon2 ..."
         val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
-        val posList = document.createElementNS("http://www.opengis.net/gml", "gml:posList")
+        val posList = document.createElement( "gml:posList")
         posList.textContent = posListString
         gmlLineString.appendChild(posList)
         linkSequenceProjection.appendChild(gmlLineString)
         projectionsElement.appendChild(linkSequenceProjection)
         serviceLinkElement.appendChild(projectionsElement)
+
+        val fromPointRef = document.createElement("FromPointRef")
+        fromPointRef.setAttribute("ref", pair.from.id)
+        fromPointRef.setAttribute("version", version)
+        serviceLinkElement.appendChild(fromPointRef)
+
+        val toPointRef = document.createElement("ToPointRef")
+        toPointRef.setAttribute("ref", pair.to.id)
+        toPointRef.setAttribute("version", version)
+        serviceLinkElement.appendChild(toPointRef)
 
         return serviceLinkElement
     }
@@ -352,5 +363,9 @@ class NetexProcessor(
         val result = StreamResult(outputStream)
         transformer.transform(source, result)
         return outputStream.toByteArray()
+    }
+
+    companion object {
+        const val SRS_NAME_WGS84: String = "ESPG:4326"
     }
 }

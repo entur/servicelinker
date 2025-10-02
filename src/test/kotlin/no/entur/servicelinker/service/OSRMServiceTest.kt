@@ -1,8 +1,8 @@
-package no.entur.servicelinkproducer.service
+package no.entur.servicelinker.service
 
 import kotlinx.coroutines.runBlocking
-import no.entur.servicelinkproducer.model.Coordinate
-import no.entur.servicelinkproducer.model.TransportMode
+import no.entur.servicelinker.model.Coordinate
+import no.entur.servicelinker.model.TransportMode
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.TestPropertySource

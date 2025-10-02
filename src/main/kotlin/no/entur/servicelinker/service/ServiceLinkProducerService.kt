@@ -1,11 +1,11 @@
-package no.entur.servicelinkproducer.service
+package no.entur.servicelinker.service
 
 import mu.KotlinLogging
-import no.entur.servicelinkproducer.model.*
+import no.entur.servicelinker.model.*
 import org.springframework.stereotype.Service
 
 @Service
-class ServiceLinkProducerService(
+class ServicelinkerService(
     private val gcsService: GcsService,
     private val netexProcessor: NetexProcessor,
     private val osrmService: OSRMService

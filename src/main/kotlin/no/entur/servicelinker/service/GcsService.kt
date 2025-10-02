@@ -1,4 +1,4 @@
-package no.entur.servicelinkproducer.service
+package no.entur.servicelinker.service
 
 import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.BlobInfo

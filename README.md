@@ -14,7 +14,7 @@ A Spring Boot application that reads Nordic Profile NeTEx files and adds missing
 
 ## Architecture
 
-- **ServiceLinkProducerService**: Main orchestration service
+- **ServicelinkerService**: Main orchestration service
 - **NetexProcessor**: Handles NeTEx XML parsing and ServiceLink injection
 - **OSRMService**: Calculates routes between coordinate pairs with caching
 - **GcsService**: Manages Google Cloud Storage operations

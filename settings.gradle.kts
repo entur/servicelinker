@@ -1,1 +1,1 @@
-rootProject.name = "servicelinkproducer"
+rootProject.name = "servicelinker"

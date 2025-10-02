@@ -1,4 +1,4 @@
-package no.entur.servicelinkproducer
+package no.entur.servicelinker
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
@@ -6,8 +6,8 @@ import org.springframework.integration.annotation.IntegrationComponentScan
 
 @SpringBootApplication
 @IntegrationComponentScan
-class ServicelinkproducerApplication
+class ServicelinkerApplication
 
 fun main(args: Array<String>) {
-	runApplication<ServicelinkproducerApplication>(*args)
+	runApplication<ServicelinkerApplication>(*args)
 }

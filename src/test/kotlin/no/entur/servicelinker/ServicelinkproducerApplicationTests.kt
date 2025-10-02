@@ -1,4 +1,4 @@
-package no.entur.servicelinkproducer
+package no.entur.servicelinker
 
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
@@ -12,7 +12,7 @@ import org.springframework.test.context.TestPropertySource
 	"osrm.base-url=http://mock-osrm.example.com",
 	"servicelink.id-prefix=TEST_"
 ])
-class ServicelinkproducerApplicationTests {
+class ServicelinkerApplicationTests {
 
 	@Test
 	fun contextLoads() {

@@ -1,9 +1,10 @@
-package no.entur.servicelinkproducer.service
+package no.entur.servicelinker.service
 
 import io.mockk.mockk
-import no.entur.servicelinkproducer.model.Coordinate
-import no.entur.servicelinkproducer.model.StopPoint
-import no.entur.servicelinkproducer.model.TransportMode
+import no.entur.servicelinker.model.Coordinate
+import no.entur.servicelinker.model.StopPoint
+import no.entur.servicelinker.model.TransportMode
+import no.entur.servicelinker.model.TransportMode.BUS
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
 import java.io.ByteArrayInputStream
@@ -14,7 +15,7 @@ class NetexProcessorTest {
     @Test
     fun `should process basic NeTEx file structure`() {
         val mockOsrmService = mockk<OSRMService>(relaxed = true)
-        val netexProcessor = NetexProcessor("TEST_", mockOsrmService)
+        val netexProcessor = NetexProcessor(mockOsrmService)
 
         val sampleNetex = """
             <?xml version="1.0" encoding="UTF-8"?>
@@ -65,10 +66,10 @@ class NetexProcessorTest {
 
     @Test
     fun `should generate stable service link IDs`() {
-        val stop1 = StopPoint("NO:StopPoint:1", "Stop 1", Coordinate(59.9139, 10.7522), TransportMode.BUS)
-        val stop2 = StopPoint("NO:StopPoint:2", "Stop 2", Coordinate(59.9127, 10.7460), TransportMode.BUS)
+        val stop1 = StopPoint("NO:StopPoint:1", "Stop 1", Coordinate(59.9139, 10.7522), BUS, "1")
+        val stop2 = StopPoint("NO:StopPoint:2", "Stop 2", Coordinate(59.9127, 10.7460), BUS, "1")
 
-        val pair = no.entur.servicelinkproducer.model.StationPair(stop1, stop2)
+        val pair = no.entur.servicelinker.model.StationPair(stop1, stop2)
         val serviceLinkId = pair.generateServiceLinkId("SL_")
 
         assert(serviceLinkId == "SL_NO_StopPoint_1_NO_StopPoint_2")

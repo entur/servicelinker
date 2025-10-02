@@ -1,14 +1,17 @@
-package no.entur.servicelinkproducer.service
+package no.entur.servicelinker.service
 
 import mu.KotlinLogging
-import no.entur.servicelinkproducer.model.Coordinate
-import no.entur.servicelinkproducer.model.OSRMResponse
-import no.entur.servicelinkproducer.model.OSRMRoute
-import no.entur.servicelinkproducer.model.TransportMode
+import no.entur.servicelinker.model.Coordinate
+import no.entur.servicelinker.model.OSRMResponse
+import no.entur.servicelinker.model.OSRMRoute
+import no.entur.servicelinker.model.TransportMode
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBody
+import reactor.netty.http.client.HttpClient
+import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 
 @Service
@@ -20,6 +23,13 @@ class OSRMService(
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.builder()
         .baseUrl(osrmBaseUrl)
+        .clientConnector(
+            ReactorClientHttpConnector(
+                HttpClient.create()
+                    .followRedirect(true)
+                    .responseTimeout(Duration.ofMillis(timeoutMs))
+            )
+        )
         .build()
 
     private val routeCache = ConcurrentHashMap<String, OSRMRoute>()
@@ -64,9 +74,9 @@ class OSRMService(
     private fun getOSRMProfile(transportMode: TransportMode?): String {
         return when (transportMode) {
             TransportMode.BUS, TransportMode.COACH -> "driving"
-            TransportMode.TRAM, TransportMode.METRO -> "driving" // Could be customized
-            TransportMode.RAIL -> "driving" // Approximation for rail routes
-            TransportMode.FERRY -> "driving" // Approximation for ferry routes
+            TransportMode.TRAM, TransportMode.METRO -> "driving"
+            TransportMode.RAIL -> "driving"
+            TransportMode.FERRY -> "driving"
             else -> "driving"
         }
     }

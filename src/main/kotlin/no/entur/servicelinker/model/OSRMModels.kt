@@ -1,4 +1,4 @@
-package no.entur.servicelinkproducer.model
+package no.entur.servicelinker.model
 
 data class OSRMRequest(
     val coordinates: List<List<Double>>,

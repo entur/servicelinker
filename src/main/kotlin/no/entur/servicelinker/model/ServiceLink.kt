@@ -1,4 +1,4 @@
-package no.entur.servicelinkproducer.model
+package no.entur.servicelinker.model
 
 data class ServiceLink(
     val id: String,
@@ -16,7 +16,8 @@ data class StopPoint(
     val id: String,
     val name: String?,
     val coordinate: Coordinate,
-    val transportMode: TransportMode?
+    val transportMode: TransportMode?,
+    val version: String?
 )
 
 enum class TransportMode {
