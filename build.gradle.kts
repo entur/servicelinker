@@ -1,8 +1,8 @@
 plugins {
-	kotlin("jvm") version "2.2.0"
-	kotlin("plugin.spring") version "2.2.0"
-	id("org.springframework.boot") version "4.0.0-M3"
-	id("io.spring.dependency-management") version "1.1.7"
+    kotlin("jvm") version "2.2.20"
+    kotlin("plugin.spring") version "2.2.20"
+    id("org.springframework.boot") version "4.0.0-M3"
+    id("io.spring.dependency-management") version "1.1.7"
 }
 
 group = "no.entur"
@@ -10,50 +10,48 @@ version = "0.0.1-SNAPSHOT"
 description = "Servicelink producer"
 
 repositories {
-	mavenCentral()
-	maven { url = uri("https://repo.spring.io/milestone") }
+    mavenCentral()
+    maven { url = uri("https://repo.spring.io/milestone") }
 }
 
 dependencyManagement {
-	imports {
-		mavenBom("com.google.cloud:spring-cloud-gcp-dependencies:5.8.0")
-	}
+    imports {
+        mavenBom("com.google.cloud:spring-cloud-gcp-dependencies:5.8.0")
+    }
 }
 
 dependencies {
-	implementation("org.springframework.boot:spring-boot-starter")
-	implementation("org.springframework.boot:spring-boot-starter-web")
-	implementation("org.springframework.boot:spring-boot-starter-webflux")
-	implementation("org.springframework.boot:spring-boot-starter-actuator")
-	implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.springframework.boot:spring-boot-starter")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("org.jetbrains.kotlin:kotlin-reflect")
 
-	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
-	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
 
-	implementation("com.google.cloud:spring-cloud-gcp-starter-storage")
-	implementation("com.google.cloud:spring-cloud-gcp-starter-pubsub")
+    implementation("com.google.cloud:spring-cloud-gcp-starter-storage")
+    implementation("com.google.cloud:spring-cloud-gcp-starter-pubsub")
 
-	implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-xml")
-	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-xml")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
-	implementation("org.springframework.integration:spring-integration-core")
-	implementation("com.google.maps:google-maps-services:2.2.0")
+    implementation("org.springframework.integration:spring-integration-core")
 
-
-	testImplementation("org.springframework.boot:spring-boot-starter-test")
-	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
-	testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test")
-	testImplementation("com.github.tomakehurst:wiremock-jre8-standalone:2.35.0")
-	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-	testImplementation("io.mockk:mockk:1.13.8")
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test")
+    testImplementation("org.wiremock:wiremock-standalone:3.13.1")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation("io.mockk:mockk:1.13.8")
 }
 
 kotlin {
-	compilerOptions {
-		freeCompilerArgs.addAll("-Xannotation-default-target=param-property")
-	}
+    compilerOptions {
+        freeCompilerArgs.addAll("-Xannotation-default-target=param-property")
+    }
 }
 
 tasks.withType<Test> {
-	useJUnitPlatform()
+    useJUnitPlatform()
 }

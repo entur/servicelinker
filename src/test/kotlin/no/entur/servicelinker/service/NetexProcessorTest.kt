@@ -1,11 +1,11 @@
 package no.entur.servicelinker.service
 
-import com.google.maps.internal.PolylineEncoding
-import com.google.maps.model.LatLng
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMRoute
+import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -21,10 +21,10 @@ class NetexProcessorTest {
     private lateinit var mockOsrmService: OSRMService
     private lateinit var netexProcessor: NetexProcessor
 
-    val oslo = LatLng(59.9139, 10.7522)
-    val lillestrøm = LatLng(59.9556, 11.0464)
-    val drammen = LatLng(59.7434, 10.2044)
-    val bergen = LatLng(60.3913, 5.3221)
+    val oslo = Coordinate(59.9139, 10.7522)
+    val lillestrøm = Coordinate(59.9556, 11.0464)
+    val drammen = Coordinate(59.7434, 10.2044)
+    val bergen = Coordinate(60.3913, 5.3221)
     private val osloToLillestromCoords = listOf(oslo, lillestrøm)
     private val osloToDrammenCoords = listOf(oslo, drammen)
     private val osloToBergenCoords = listOf(oslo, bergen)
@@ -40,7 +40,7 @@ class NetexProcessorTest {
         return requireNotNull(inputStream) { "sample-netex.xml not found in test resources" }
     }
 
-    private fun mockOsrmWithRoute(coords: List<LatLng>, distance: Double, duration: Double = 1200.0) {
+    private fun mockOsrmWithRoute(coords: List<Coordinate>, distance: Double, duration: Double = 1200.0) {
         coEvery {
             mockOsrmService.calculateRoute(any(), any(), any())
         } returns OSRMRoute(

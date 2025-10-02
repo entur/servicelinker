@@ -2,7 +2,8 @@ package no.entur.servicelinker.model
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.google.maps.internal.PolylineEncoding
+import no.entur.servicelinker.util.PolylineEncoding
+import java.math.BigDecimal
 
 data class OSRMResponse(
     val routes: List<OSRMRoute>
@@ -15,8 +16,8 @@ data class OSRMRoute(
     private val geometry: String
 ) {
     @get:JsonProperty(access = JsonProperty.Access.READ_ONLY)
-    val coordinates: List<List<Double>>
-        get() = PolylineEncoding.decode(geometry).map { listOf(it.lng, it.lat) }
+    val coordinates: List<List<BigDecimal>>
+        get() = PolylineEncoding.decode(geometry).map { listOf(it.longitude, it.latitude) }
 }
 
 data class ProcessingRequest(

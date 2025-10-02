@@ -73,10 +73,10 @@ class OSRMServiceTest {
         val firstCoordinate = route.coordinates.first()
         val lastCoordinate = route.coordinates.last()
 
-        assert(kotlin.math.abs(firstCoordinate[0] - 10.75261) < 0.0001) { "Expected longitude ~10.75261, got ${firstCoordinate[0]}" }
-        assert(kotlin.math.abs(firstCoordinate[1] - 59.913953) < 0.0001) { "Expected latitude ~59.913953, got ${firstCoordinate[1]}" }
-        assert(kotlin.math.abs(lastCoordinate[0] - 11.046175) < 0.0001) { "Expected longitude ~11.046175, got ${lastCoordinate[0]}" }
-        assert(kotlin.math.abs(lastCoordinate[1] - 59.955648) < 0.0001) { "Expected latitude ~59.955648, got ${lastCoordinate[1]}" }
+        assert((firstCoordinate[0].toDouble() - 10.75261) < 0.0001) { "Expected longitude ~10.75261, got ${firstCoordinate[0]}" }
+        assert((firstCoordinate[1].toDouble() - 59.913953) < 0.0001) { "Expected latitude ~59.913953, got ${firstCoordinate[1]}" }
+        assert((lastCoordinate[0].toDouble() - 11.046175) < 0.0001) { "Expected longitude ~11.046175, got ${lastCoordinate[0]}" }
+        assert((lastCoordinate[1].toDouble() - 59.955648) < 0.0001) { "Expected latitude ~59.955648, got ${lastCoordinate[1]}" }
 
         wireMockServer.verify(
             getRequestedFor(urlPathMatching("/route/v1/driving/.*"))
