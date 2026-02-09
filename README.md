@@ -1,151 +1,79 @@
 # ServiceLink Producer
 
-A Spring Boot application that reads Nordic Profile NeTEx files and adds missing ServiceLinks based on coordinate pairs and transport mode using OSRM routing.
+A Spring Boot application that reads Nordic Profile NeTEx files and adds missing ServiceLinks based on coordinate pairs and transport mode using OSRM routing. Part of the marduk pipeline, positioned after ashur and before post-validation.
 
 ## Features
 
-- Reads NeTEx files from Google Cloud Storage
+- Reads NeTEx datasets (ZIP archives or single XML files) from Google Cloud Storage
 - Identifies missing ServiceLinks between stop points
-- Uses OSRM (Open Source Routing Machine) to calculate routes
-- Adds ServiceLinks with stable IDs
+- Uses transport mode-specific OSRM instances for accurate routing (bus, rail, ferry, water)
+- Adds ServiceLinks with route geometry (GML LineString) and distances
 - Preserves existing ServiceLinks (no overwrites)
-- Supports PubSub triggers from Marduk
-- Returns updated file references
+- Handles ZIP archives: processes all XML files, preserves non-XML entries
+- Event-driven via PubSub (inbound trigger, outbound completion)
+- REST API for manual processing and debugging
 
 ## Architecture
 
-- **ServicelinkerService**: Main orchestration service
-- **NetexProcessor**: Handles NeTEx XML parsing and ServiceLink injection
-- **OSRMService**: Calculates routes between coordinate pairs with caching
-- **GcsService**: Manages Google Cloud Storage operations
-- **PubSubMessageHandler**: Processes incoming PubSub triggers
+- **PubSubMessageHandler**: Receives PubSub messages, orchestrates processing, publishes completion
+- **ServiceLinkProducerService**: Main orchestration: ZIP/XML detection, processing, GCS I/O
+- **NetexProcessor**: NeTEx XML parsing, stop point extraction, ServiceLink injection
+- **OSRMService**: Per-mode OSRM routing with in-memory caching
+- **GcsService**: Google Cloud Storage operations
+
+## Quick Start
+
+```bash
+# Run tests
+./gradlew test
+
+# Run locally with docker-compose (PubSub emulator + fake GCS + app)
+./gradlew bootJar
+docker-compose up --build
+
+# Process a NeTEx file via REST API
+curl -X POST http://localhost:8080/api/servicelink/process-xml \
+  -H "Content-Type: application/xml" \
+  --data-binary @src/test/resources/sample-netex.xml
+```
 
 ## Configuration
 
-Set the following environment variables or application properties:
+All configuration is via environment variables. Key settings:
 
-```properties
-# Google Cloud
-GCP_PROJECT_ID=your-project-id
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GCP_PROJECT_ID` | `entur-project` | GCP project ID |
+| `PUBSUB_INBOUND_SUBSCRIPTION` | `servicelinker-inbound-sub` | PubSub subscription to listen on |
+| `PUBSUB_OUTBOUND_TOPIC` | `servicelinker-outbound` | PubSub topic for completion messages |
+| `GCS_INPUT_BUCKET` | `marduk-exchange` | Input bucket |
+| `GCS_OUTPUT_BUCKET` | `servicelinker-exchange` | Output bucket |
+| `OSRM_URL_BUS` | `https://router.project-osrm.org` | OSRM instance for BUS/COACH |
+| `OSRM_URL_RAIL` | `https://router.project-osrm.org` | OSRM instance for RAIL/TRAM/METRO |
+| `OSRM_URL_FERRY` | `https://router.project-osrm.org` | OSRM instance for FERRY |
+| `OSRM_URL_WATER` | `https://router.project-osrm.org` | OSRM instance for WATER |
+| `OSRM_URL_DEFAULT` | `https://router.project-osrm.org` | Fallback OSRM instance |
 
-# PubSub
-PUBSUB_SUBSCRIPTION=servicelink-trigger
-PUBSUB_TOPIC=servicelink-topic
+See [docs/development-and-operations.md](docs/development-and-operations.md) for full configuration reference, local development setup, marduk integration details, and k8s deployment instructions.
 
-# Google Cloud Storage
-GCS_INPUT_BUCKET=netex-files
-GCS_OUTPUT_BUCKET=netex-processed
+## Transport Mode Routing
 
-# OSRM
-OSRM_BASE_URL=http://router.project-osrm.org
-OSRM_TIMEOUT=30000
+| Transport modes | OSRM instance |
+|----------------|---------------|
+| BUS, COACH | osrm-bus |
+| RAIL, TRAM, METRO | osrm-rail |
+| FERRY | osrm-ferry |
+| WATER | osrm-water |
+| Unknown/null | osrm-car (default) |
 
-# ServiceLink configuration
-SERVICELINK_ID_PREFIX=SL_
-SERVICELINK_CACHE_ROUTES=true
-```
-
-## API Endpoints
-
-### Process NeTEx File
-```http
-POST /api/servicelink/process
-Content-Type: application/json
-
-{
-  "gcsFilePath": "gs://bucket/path/to/netex-file.xml",
-  "outputBucket": "processed-bucket"
-}
-```
-
-### Cache Management
-```http
-GET /api/servicelink/cache/stats
-POST /api/servicelink/cache/clear
-```
-
-### Health Check
-```http
-GET /api/servicelink/health
-```
-
-## Usage
-
-### Manual Processing
-```bash
-curl -X POST http://localhost:8080/api/servicelink/process \
-  -H "Content-Type: application/json" \
-  -d '{
-    "gcsFilePath": "gs://netex-files/sample.xml",
-    "outputBucket": "processed-files"
-  }'
-```
-
-### PubSub Message Format
-```json
-{
-  "gcsFilePath": "gs://netex-files/sample.xml",
-  "outputBucket": "processed-files"
-}
-```
-
-## ServiceLink Generation
-
-The application:
-
-1. Parses NeTEx files to extract ScheduledStopPoints and StopPlaces
-2. Identifies coordinate pairs within reasonable distance (≤50km)
-3. Skips pairs that already have ServiceLinks
-4. Calculates routes using OSRM with transport mode-specific profiles
-5. Generates stable ServiceLink IDs: `{prefix}{fromStopId}_{toStopId}`
-6. Adds ServiceLinks to the NeTEx file structure
-
-## Transport Mode Mapping
-
-- BUS, COACH → OSRM driving profile
-- TRAM, METRO → OSRM driving profile (customizable)
-- RAIL → OSRM driving profile (approximation)
-- FERRY → OSRM driving profile (approximation)
-
-## Building and Running
-
-```bash
-# Build
-./gradlew build
-
-# Run
-./gradlew bootRun
-
-# Build Docker image
-./gradlew bootBuildImage
-```
-
-## Testing
-
-```bash
-# Run all tests
-./gradlew test
-
-# Run specific test
-./gradlew test --tests "*NetexProcessorTest*"
-```
-
-## Development
-
-The application follows Spring Boot best practices and includes:
-
-- Comprehensive error handling
-- Structured logging with correlation IDs
-- Route caching for performance
-- Configurable OSRM profiles
-- Mock-friendly service architecture
+All OSRM instances expose `/route/v1/driving/` -- the correct routing comes from the network data loaded in each instance.
 
 ## Dependencies
 
-- Spring Boot 4.0.0-M2
-- Spring Cloud GCP for Storage and PubSub
-- Kotlin with Coroutines
+- Spring Boot 4.0.2
+- Spring Cloud GCP 7.4.3 (Storage, PubSub)
+- Kotlin 2.3.0 with Coroutines
 - Jackson for XML/JSON processing
 - WebFlux for OSRM HTTP client
-- JUnit 5 for testing
+- Testcontainers for integration tests
+- WireMock + mockk for unit tests

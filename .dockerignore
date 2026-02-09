@@ -1,0 +1,10 @@
+.git
+.gradle
+.idea
+.kotlin
+.vscode
+src/
+docs/
+scripts/
+*.md
+*.iml

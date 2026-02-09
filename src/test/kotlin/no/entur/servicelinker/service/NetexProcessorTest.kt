@@ -9,13 +9,11 @@ import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.springframework.boot.test.context.SpringBootTest
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import java.io.InputStream
 import javax.xml.parsers.DocumentBuilderFactory
 
-@SpringBootTest
 class NetexProcessorTest {
 
     private lateinit var mockOsrmService: OSRMService
@@ -108,7 +106,7 @@ class NetexProcessorTest {
         try {
             val (processedXml, _) = netexProcessor.processNetexFile(inputStream)
             assertTrue(processedXml.isNotEmpty(), "Should still produce valid XML")
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             exceptionThrown = true
         }
 
@@ -163,11 +161,11 @@ class NetexProcessorTest {
 
         assertNotNull(fromPointRef, "Should have FromPointRef")
         assertNotNull(toPointRef, "Should have ToPointRef")
-        assertTrue(fromPointRef!!.hasAttribute("ref"), "FromPointRef should have ref attribute")
-        assertTrue(toPointRef!!.hasAttribute("ref"), "ToPointRef should have ref attribute")
+        assertTrue(requireNotNull(fromPointRef).hasAttribute("ref"), "FromPointRef should have ref attribute")
+        assertTrue(requireNotNull(toPointRef).hasAttribute("ref"), "ToPointRef should have ref attribute")
     }
 
-    private fun parseXmlFromStream(inputStream: java.io.InputStream): Document {
+    private fun parseXmlFromStream(inputStream: InputStream): Document {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
         return factory.newDocumentBuilder().parse(inputStream)

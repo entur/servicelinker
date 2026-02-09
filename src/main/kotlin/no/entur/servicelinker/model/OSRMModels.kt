@@ -20,18 +20,6 @@ data class OSRMRoute(
         get() = PolylineEncoding.decode(geometry).map { listOf(it.longitude, it.latitude) }
 }
 
-data class ProcessingRequest(
-    val gcsFilePath: String,
-    val outputBucket: String? = null
-)
-
-data class ProcessingResult(
-    val success: Boolean,
-    val outputFilePath: String?,
-    val addedServiceLinksCount: Int,
-    val errorMessage: String? = null
-)
-
 data class DirectProcessingResult(
     val success: Boolean,
     val processedXml: String?,

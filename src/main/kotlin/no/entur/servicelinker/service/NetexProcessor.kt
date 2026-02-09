@@ -1,8 +1,11 @@
 package no.entur.servicelinker.service
 
-import no.entur.servicelinker.model.*
+import no.entur.servicelinker.model.Coordinate
+import no.entur.servicelinker.model.OSRMRoute
+import no.entur.servicelinker.model.StationPair
+import no.entur.servicelinker.model.StopPoint
+import no.entur.servicelinker.model.TransportMode
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -16,26 +19,40 @@ import javax.xml.transform.stream.StreamResult
 
 @Service
 class NetexProcessor(
-    @Autowired private val osrmService: OSRMService
+    private val osrmService: OSRMService
 ) {
     private val logger = LoggerFactory.getLogger(NetexProcessor::class.java)
 
     suspend fun processNetexFile(inputStream: InputStream): Pair<ByteArray, Int> {
         logger.info("Starting NeTEx file processing")
-
         val document = parseXmlDocument(inputStream)
         val stopPoints = extractStopPoints(document)
         val existingServiceLinks = extractExistingServiceLinks(document)
-
-        logger.info("Found ${stopPoints.size} stop points and ${existingServiceLinks.size} existing service links")
-
         val stationPairs = generateStationPairs(stopPoints, existingServiceLinks)
         logger.info("Generated ${stationPairs.size} station pairs that need service links")
 
-        val addedCount = addServiceLinksToDocument(document, stationPairs)
-
+        var addedCount = 0
+        var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
+        if (serviceLinksSection == null) {
+            val commonFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
+                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
+                ?: document.documentElement
+            serviceLinksSection = document.createElement("serviceLinks")
+            commonFrame.appendChild(serviceLinksSection)
+        }
+        for (pair in stationPairs) {
+            val route = try {
+                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
+            } catch (e: Exception) {
+                logger.warn("OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}", e)
+                null
+            }
+            val serviceLinkElement = createServiceLinkElement(document, pair, route)
+            serviceLinksSection.appendChild(serviceLinkElement)
+            addedCount++
+        }
+        ensureGmlNamespace(document)
         val modifiedXml = documentToByteArray(document)
-
         logger.info("NeTEx processing completed. Added $addedCount service links")
         return Pair(modifiedXml, addedCount)
     }
@@ -156,11 +173,10 @@ class NetexProcessor(
                 if (!existingServiceLinks.contains(pairKey) && !existingServiceLinks.contains(reversePairKey)) {
                     val route = try {
                         osrmService.calculateRoute(from.coordinate, to.coordinate, from.transportMode)
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         null
                     }
 
-                    // Only add pairs where OSRM can find a route (and distance is reasonable)
                     if (route != null && route.distance <= MAX_DISTANCE_METERS) {
                         pairs.add(StationPair(from, to))
                     }
@@ -171,63 +187,7 @@ class NetexProcessor(
         return pairs
     }
 
-
-    private suspend fun addServiceLinksToDocument(document: Document, stationPairs: List<StationPair>): Int {
-        var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
-
-        if (serviceLinksSection == null) {
-            val commonFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
-                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
-                ?: document.documentElement
-
-            serviceLinksSection = document.createElement("serviceLinks")
-            commonFrame.appendChild(serviceLinksSection)
-        }
-
-        var addedCount = 0
-
-        for (pair in stationPairs) {
-            val route = try {
-                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
-            } catch (e: Exception) {
-                logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}, using straight-line distance", e)
-                null
-            }
-
-            val serviceLinkElement = createServiceLinkElementWithDistance(document, pair, route?.distance?.toInt())
-            serviceLinksSection.appendChild(serviceLinkElement)
-            addedCount++
-        }
-
-        return addedCount
-    }
-
-    private fun createServiceLinkElementWithDistance(document: Document, pair: StationPair, osrmDistance: Int?): Element {
-        val serviceLinkId = pair.generateServiceLinkId("LS_")
-
-        val serviceLinkElement = document.createElement("ServiceLink")
-        serviceLinkElement.setAttribute("id", serviceLinkId)
-        serviceLinkElement.setAttribute("version", "1")
-
-        val fromPointRef = document.createElement("FromPointRef")
-        fromPointRef.setAttribute("ref", pair.from.id)
-        serviceLinkElement.appendChild(fromPointRef)
-
-        val toPointRef = document.createElement("ToPointRef")
-        toPointRef.setAttribute("ref", pair.to.id)
-        serviceLinkElement.appendChild(toPointRef)
-
-        if (osrmDistance != null) {
-            val distanceElement = document.createElement("Distance")
-            distanceElement.textContent = osrmDistance.toString()
-            serviceLinkElement.appendChild(distanceElement)
-        }
-
-        return serviceLinkElement
-    }
-
-
-    private fun createServiceLinkElementWithRoute(document: Document, pair: StationPair, route: OSRMRoute?): Element {
+    private fun createServiceLinkElement(document: Document, pair: StationPair, route: OSRMRoute?): Element {
         val fromParts = pair.from.id.split(":")
         val toParts = pair.to.id.split(":")
         val tariffZone = fromParts.first()
@@ -243,19 +203,17 @@ class NetexProcessor(
         serviceLinkElement.setAttribute("id", serviceLinkId)
         serviceLinkElement.setAttribute("version", version)
 
-        // Only use OSRM distance, skip distance element if not available
         if (route?.distance != null) {
             val distanceElement = document.createElement("Distance")
             distanceElement.textContent = route.distance.toInt().toString()
             serviceLinkElement.appendChild(distanceElement)
         }
 
-        // Add projections with GML LineString
         val projectionsElement = document.createElement("projections")
         val linkSequenceProjection = document.createElement("LinkSequenceProjection")
         linkSequenceProjection.setAttribute("id", linkSequenceProjectionId)
         linkSequenceProjection.setAttribute("version", "1")
-        val gmlLineString = document.createElement( "gml:LineString")
+        val gmlLineString = document.createElement("gml:LineString")
         gmlLineString.setAttribute("srsName", SRS_NAME_WGS84)
         gmlLineString.setAttribute("gml:id", "lsp_${fromId}_${toId}")
         val coordinates = route?.coordinates ?: listOf(
@@ -263,7 +221,7 @@ class NetexProcessor(
             listOf(pair.to.coordinate.longitude.toDouble(), pair.to.coordinate.latitude.toDouble())
         )
         val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
-        val posList = document.createElement( "gml:posList")
+        val posList = document.createElement("gml:posList")
         posList.textContent = posListString
         gmlLineString.appendChild(posList)
         linkSequenceProjection.appendChild(gmlLineString)
@@ -285,45 +243,9 @@ class NetexProcessor(
 
     private fun ensureGmlNamespace(document: Document) {
         val root = document.documentElement
-        val gmlNamespace = "http://www.opengis.net/gml"
-        val hasGmlNamespace = root.hasAttribute("xmlns:gml")
-        if (!hasGmlNamespace) {
-            root.setAttribute("xmlns:gml", gmlNamespace)
+        if (!root.hasAttribute("xmlns:gml")) {
+            root.setAttribute("xmlns:gml", "http://www.opengis.net/gml")
         }
-    }
-
-    suspend fun processNetexFileWithRoutes(inputStream: InputStream): Pair<ByteArray, Int> {
-        logger.info("Starting NeTEx file processing with OSRM routes")
-        val document = parseXmlDocument(inputStream)
-        val stopPoints = extractStopPoints(document)
-        val existingServiceLinks = extractExistingServiceLinks(document)
-        val stationPairs = generateStationPairs(stopPoints, existingServiceLinks)
-        logger.info("Generated ${stationPairs.size} station pairs that need service links")
-        var addedCount = 0
-
-        var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
-        if (serviceLinksSection == null) {
-            val commonFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
-                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
-                ?: document.documentElement
-            serviceLinksSection = document.createElement("serviceLinks")
-            commonFrame.appendChild(serviceLinksSection)
-        }
-        for (pair in stationPairs) {
-            val route = try {
-                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
-            } catch (e: Exception) {
-                logger.warn("OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}", e)
-                null
-            }
-            val serviceLinkElement = createServiceLinkElementWithRoute(document, pair, route)
-            serviceLinksSection.appendChild(serviceLinkElement)
-            addedCount++
-        }
-        ensureGmlNamespace(document)
-        val modifiedXml = documentToByteArray(document)
-        logger.info("NeTEx processing completed. Added $addedCount service links")
-        return Pair(modifiedXml, addedCount)
     }
 
     private fun extractTransportMode(element: Element): TransportMode? {
@@ -337,6 +259,7 @@ class NetexProcessor(
             "RAIL" -> TransportMode.RAIL
             "METRO" -> TransportMode.METRO
             "FERRY" -> TransportMode.FERRY
+            "WATER" -> TransportMode.WATER
             "COACH" -> TransportMode.COACH
             else -> TransportMode.UNKNOWN
         }
@@ -359,7 +282,7 @@ class NetexProcessor(
     }
 
     companion object {
-        const val SRS_NAME_WGS84: String = "ESPG:4326"
+        const val SRS_NAME_WGS84: String = "EPSG:4326"
         const val MAX_DISTANCE_METERS = 50000
     }
 }

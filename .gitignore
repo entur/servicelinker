@@ -38,3 +38,9 @@ out/
 
 ### Kotlin ###
 .kotlin
+
+### macOS ###
+.DS_Store
+
+### Docker test artifacts ###
+processed.xml

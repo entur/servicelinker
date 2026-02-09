@@ -1,7 +1,5 @@
 package no.entur.servicelinker.controller
 
-import no.entur.servicelinker.model.ProcessingRequest
-import no.entur.servicelinker.model.ProcessingResult
 import no.entur.servicelinker.service.ServiceLinkProducerService
 import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
@@ -13,19 +11,6 @@ class ServiceLinkController(
     private val serviceLinkProducerService: ServiceLinkProducerService
 ) {
     private val logger = LoggerFactory.getLogger(ServiceLinkController::class.java)
-
-    @PostMapping("/process")
-    suspend fun processFile(@RequestBody request: ProcessingRequest): ResponseEntity<ProcessingResult> {
-        logger.info("Manual processing request for file: ${request.gcsFilePath}")
-
-        val result = serviceLinkProducerService.processNetexFile(request)
-
-        return if (result.success) {
-            ResponseEntity.ok(result)
-        } else {
-            ResponseEntity.badRequest().body(result)
-        }
-    }
 
     @PostMapping("/process-xml", consumes = ["application/xml", "text/xml"], produces = ["application/xml"])
     suspend fun processXmlFile(

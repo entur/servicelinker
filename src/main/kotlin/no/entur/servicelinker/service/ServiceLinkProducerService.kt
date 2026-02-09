@@ -1,96 +1,98 @@
 package no.entur.servicelinker.service
 
-import no.entur.servicelinker.model.*
+import no.entur.servicelinker.model.DirectProcessingResult
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 @Service
 class ServiceLinkProducerService(
     private val gcsService: GcsService,
     private val netexProcessor: NetexProcessor,
-    private val osrmService: OSRMService
+    private val osrmService: OSRMService,
+    @Value("\${gcs.bucket.output}") private val outputBucket: String
 ) {
     private val logger = LoggerFactory.getLogger(ServiceLinkProducerService::class.java)
 
-    suspend fun processNetexFile(request: ProcessingRequest): ProcessingResult {
-        return try {
-            logger.info("Starting ServiceLink production for file: ${request.gcsFilePath}")
+    suspend fun processDataset(inputBucket: String, objectName: String): Int {
+        logger.info("Processing dataset: gs://$inputBucket/$objectName")
 
-            if (!gcsService.fileExists(request.gcsFilePath)) {
-                return ProcessingResult(
-                    success = false,
-                    outputFilePath = null,
-                    addedServiceLinksCount = 0,
-                    errorMessage = "Input file not found: ${request.gcsFilePath}"
-                )
-            }
+        val data = gcsService.downloadFile(inputBucket, objectName)
+            ?: throw RuntimeException("Failed to download gs://$inputBucket/$objectName")
 
-            val inputStream = gcsService.downloadFile(request.gcsFilePath)
-                ?: return ProcessingResult(
-                    success = false,
-                    outputFilePath = null,
-                    addedServiceLinksCount = 0,
-                    errorMessage = "Failed to download file: ${request.gcsFilePath}"
-                )
+        val isZip = data.size >= 4 && data[0] == 0x50.toByte() && data[1] == 0x4B.toByte()
+                && data[2] == 0x03.toByte() && data[3] == 0x04.toByte()
 
-            inputStream.use { stream ->
-                val (processedXml, addedCount) = netexProcessor.processNetexFile(stream)
-
-                if (addedCount == 0) {
-                    logger.info("No ServiceLinks needed to be added for file: ${request.gcsFilePath}")
-                    return ProcessingResult(
-                        success = true,
-                        outputFilePath = request.gcsFilePath, // Return original file path
-                        addedServiceLinksCount = 0
-                    )
-                }
-
-                val outputPath = gcsService.uploadFile(
-                    processedXml,
-                    request.gcsFilePath,
-                    request.outputBucket
-                )
-
-                if (outputPath != null) {
-                    logger.info("Successfully processed file. Added $addedCount ServiceLinks. Output: $outputPath")
-                    ProcessingResult(
-                        success = true,
-                        outputFilePath = outputPath,
-                        addedServiceLinksCount = addedCount
-                    )
-                } else {
-                    ProcessingResult(
-                        success = false,
-                        outputFilePath = null,
-                        addedServiceLinksCount = addedCount,
-                        errorMessage = "Failed to upload processed file"
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            logger.error("Error processing NeTEx file: ${request.gcsFilePath}", e)
-            ProcessingResult(
-                success = false,
-                outputFilePath = null,
-                addedServiceLinksCount = 0,
-                errorMessage = "Processing error: ${e.message}"
-            )
+        val (processedData, totalAdded) = if (isZip || objectName.endsWith(".zip", ignoreCase = true)) {
+            processZipArchive(data)
+        } else {
+            processSingleXml(data)
         }
+
+        gcsService.uploadFile(
+            processedData,
+            outputBucket,
+            objectName,
+            if (isZip) "application/zip" else "application/xml"
+        ) ?: throw RuntimeException("Failed to upload processed file to gs://$outputBucket/$objectName")
+
+        logger.info("Dataset processing complete. Added $totalAdded ServiceLinks total. Output: gs://$outputBucket/$objectName")
+        return totalAdded
+    }
+
+    private suspend fun processZipArchive(zipData: ByteArray): Pair<ByteArray, Int> {
+        val outputBuffer = ByteArrayOutputStream()
+        var totalAdded = 0
+
+        ZipInputStream(ByteArrayInputStream(zipData)).use { zis ->
+            ZipOutputStream(outputBuffer).use { zos ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    val entryData = zis.readBytes()
+
+                    if (!entry.isDirectory && entry.name.endsWith(".xml", ignoreCase = true)) {
+                        logger.info("Processing XML entry: ${entry.name}")
+                        val (processedXml, addedCount) = netexProcessor.processNetexFile(
+                            ByteArrayInputStream(entryData)
+                        )
+                        totalAdded += addedCount
+
+                        zos.putNextEntry(ZipEntry(entry.name))
+                        zos.write(processedXml)
+                    } else {
+                        zos.putNextEntry(ZipEntry(entry.name))
+                        zos.write(entryData)
+                    }
+                    zos.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+        }
+
+        return Pair(outputBuffer.toByteArray(), totalAdded)
+    }
+
+    private suspend fun processSingleXml(xmlData: ByteArray): Pair<ByteArray, Int> {
+        return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData))
     }
 
     suspend fun processXmlContentDirectly(xmlContent: String, filename: String): DirectProcessingResult {
         return try {
             logger.info("Starting direct ServiceLink production for XML content: $filename")
-            val inputStream = xmlContent.byteInputStream(Charsets.UTF_8)
-            inputStream.use { stream ->
-                val (processedXml, addedCount) = netexProcessor.processNetexFileWithRoutes(stream)
-                logger.info("Successfully processed XML content. Added $addedCount ServiceLinks for file: $filename")
-                DirectProcessingResult(
-                    success = true,
-                    processedXml = String(processedXml, Charsets.UTF_8),
-                    addedServiceLinksCount = addedCount
-                )
-            }
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(
+                xmlContent.byteInputStream(Charsets.UTF_8)
+            )
+            logger.info("Successfully processed XML content. Added $addedCount ServiceLinks for file: $filename")
+            DirectProcessingResult(
+                success = true,
+                processedXml = String(processedXml, Charsets.UTF_8),
+                addedServiceLinksCount = addedCount
+            )
         } catch (e: Exception) {
             logger.error("Error processing XML content directly: $filename", e)
             DirectProcessingResult(
@@ -101,6 +103,7 @@ class ServiceLinkProducerService(
             )
         }
     }
+
     fun getRoutingCacheStatistics(): Map<String, Any> {
         return mapOf(
             "cacheSize" to osrmService.getCacheSize(),

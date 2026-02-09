@@ -1,44 +1,61 @@
 package no.entur.servicelinker.controller
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.cloud.spring.pubsub.core.PubSubTemplate
-import no.entur.servicelinker.model.ProcessingRequest
+import com.google.cloud.spring.pubsub.support.BasicAcknowledgeablePubsubMessage
+import com.google.cloud.spring.pubsub.support.GcpPubSubHeaders
+import kotlinx.coroutines.runBlocking
 import no.entur.servicelinker.service.ServiceLinkProducerService
 import org.slf4j.LoggerFactory
-import org.springframework.boot.context.event.ApplicationReadyEvent
-import org.springframework.context.event.EventListener
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.integration.annotation.ServiceActivator
+import org.springframework.messaging.Message
 import org.springframework.stereotype.Component
 
 @Component
 class PubSubMessageHandler(
     private val serviceLinkProducerService: ServiceLinkProducerService,
-    private val objectMapper: ObjectMapper,
-    private val pubSubTemplate: PubSubTemplate
+    private val pubSubTemplate: PubSubTemplate,
+    @Value("\${servicelinker.pubsub.outbound.topic}") private val outboundTopic: String,
+    @Value("\${gcs.bucket.input}") private val inputBucket: String,
+    @Value("\${gcs.bucket.output}") private val outputBucket: String
 ) {
     private val logger = LoggerFactory.getLogger(PubSubMessageHandler::class.java)
 
-    @EventListener(ApplicationReadyEvent::class)
-    fun startSubscription() {
-        logger.info("Starting PubSub subscription for ServiceLink processing")
-        // For now, we'll handle messages via REST API
-        // PubSub integration can be added later when properly configured
-    }
+    @ServiceActivator(inputChannel = "servicelinkerInputChannel")
+    fun handleMessage(message: Message<*>) {
+        val acker = message.headers[GcpPubSubHeaders.ORIGINAL_MESSAGE] as? BasicAcknowledgeablePubsubMessage
 
-    suspend fun processMessageFromString(messagePayload: String) {
         try {
-            logger.info("Processing message: $messagePayload")
+            val attributes = acker?.pubsubMessage?.attributesMap ?: emptyMap()
+            val objectName = attributes["objectName"]
+                ?: throw IllegalArgumentException("Message missing 'objectName' attribute")
+            val bucketName = attributes["bucketName"] ?: inputBucket
+            val correlationId = attributes["correlationId"] ?: ""
 
-            val request = objectMapper.readValue(messagePayload, ProcessingRequest::class.java)
+            logger.info("Received PubSub message: bucket=$bucketName, object=$objectName, correlationId=$correlationId")
 
-            val result = serviceLinkProducerService.processNetexFile(request)
-
-            if (result.success) {
-                logger.info("Successfully processed file: ${result.outputFilePath}, added ${result.addedServiceLinksCount} ServiceLinks")
-            } else {
-                logger.error("Failed to process file: ${result.errorMessage}")
+            val addedCount = runBlocking {
+                serviceLinkProducerService.processDataset(bucketName, objectName)
             }
+
+            logger.info("Processing complete. Added $addedCount ServiceLinks. Publishing to outbound topic.")
+
+            pubSubTemplate.publish(
+                outboundTopic,
+                "processing complete",
+                mapOf(
+                    "objectName" to objectName,
+                    "bucketName" to outputBucket,
+                    "correlationId" to correlationId,
+                    "addedServiceLinksCount" to addedCount.toString()
+                )
+            )
+
+            acker?.ack()
+            logger.info("Message acknowledged for correlationId=$correlationId")
         } catch (e: Exception) {
-            logger.error("Error processing message", e)
+            logger.error("Failed to process PubSub message", e)
+            acker?.nack()
         }
     }
 }

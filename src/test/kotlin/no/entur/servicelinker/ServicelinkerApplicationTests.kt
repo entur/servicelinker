@@ -9,8 +9,13 @@ import org.springframework.test.context.TestPropertySource
 	"spring.cloud.gcp.project-id=test-project",
 	"gcs.bucket.input=test-input-bucket",
 	"gcs.bucket.output=test-output-bucket",
-	"osrm.base-url=http://mock-osrm.example.com",
-	"servicelink.id-prefix=TEST_"
+	"osrm.urls.default=http://mock-osrm.example.com",
+	"osrm.urls.bus=http://mock-osrm.example.com",
+	"osrm.urls.rail=http://mock-osrm.example.com",
+	"osrm.urls.ferry=http://mock-osrm.example.com",
+	"osrm.urls.water=http://mock-osrm.example.com",
+	"servicelinker.pubsub.inbound.subscription=test-inbound-sub",
+	"servicelinker.pubsub.outbound.topic=test-outbound"
 ])
 class ServicelinkerApplicationTests {
 
