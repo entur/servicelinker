@@ -91,7 +91,7 @@ class OSRMService(
 
             route
         } catch (e: Exception) {
-            logger.error("Failed to calculate route from $from to $to", e)
+            logger.warn("Failed to calculate route from $from to $to (mode: $modeKey): ${e.message}")
             null
         }
     }

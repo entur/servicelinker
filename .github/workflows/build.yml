@@ -1,0 +1,71 @@
+name: Build it
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    uses: entur/gha-docker/.github/workflows/lint.yml@v1
+
+  gradle-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      image_tag: ${{ steps.build-push.outputs.image_tag }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: liberica
+          java-version: 25
+          cache: gradle
+
+      - name: Build with Gradle
+        run: ./gradlew --no-daemon build
+
+      - name: Archive Build Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jar-artifact
+          path: build/libs
+          retention-days: 1
+          overwrite: true
+
+  docker-build:
+    needs: [ gradle-build, lint ]
+    uses: entur/gha-docker/.github/workflows/build.yml@v1
+    with:
+      build_artifact_name: jar-artifact
+      build_artifact_path: build/libs
+
+  docker-push:
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: docker-build
+    uses: entur/gha-docker/.github/workflows/push.yml@v1
+
+  scan:
+    needs: [docker-build]
+    uses: entur/gha-security/.github/workflows/docker-scan.yml@v2
+    with:
+      image_artifact: ${{ needs.docker-build.outputs.image_artifact }}
+
+  deploy:
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: docker-push
+    uses: entur/gha-helm/.github/workflows/deploy.yml@v1
+    with:
+      environment: dev
+      image: ${{ needs.docker-push.outputs.image_name }}:${{ needs.docker-push.outputs.image_tag}}
+      chart: helm/servicelinker
+      namespace: servicelinker
+      release_name: servicelinker
+    secrets: inherit

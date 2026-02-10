@@ -6,16 +6,11 @@ import org.springframework.test.context.TestPropertySource
 
 @SpringBootTest
 @TestPropertySource(properties = [
-	"spring.cloud.gcp.project-id=test-project",
-	"gcs.bucket.input=test-input-bucket",
-	"gcs.bucket.output=test-output-bucket",
 	"osrm.urls.default=http://mock-osrm.example.com",
 	"osrm.urls.bus=http://mock-osrm.example.com",
 	"osrm.urls.rail=http://mock-osrm.example.com",
 	"osrm.urls.ferry=http://mock-osrm.example.com",
-	"osrm.urls.water=http://mock-osrm.example.com",
-	"servicelinker.pubsub.inbound.subscription=test-inbound-sub",
-	"servicelinker.pubsub.outbound.topic=test-outbound"
+	"osrm.urls.water=http://mock-osrm.example.com"
 ])
 class ServicelinkerApplicationTests {
 

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: servicelinker
+description: Servicelink producer Helm Chart
+type: application
+version: 0.0.1
+appVersion: "0.0.1"
+dependencies:
+  - name: common
+    version: 1.21.1
+    repository: "https://entur.github.io/helm-charts"

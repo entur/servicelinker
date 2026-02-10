@@ -23,7 +23,6 @@ class ServiceLinkProducerService(
         logger.info("Processing dataset: gs://$inputBucket/$objectName")
 
         val data = gcsService.downloadFile(inputBucket, objectName)
-            ?: throw RuntimeException("Failed to download gs://$inputBucket/$objectName")
 
         val isZip = data.size >= 4 && data[0] == 0x50.toByte() && data[1] == 0x4B.toByte()
                 && data[2] == 0x03.toByte() && data[3] == 0x04.toByte()
@@ -39,7 +38,7 @@ class ServiceLinkProducerService(
             outputBucket,
             objectName,
             if (isZip) "application/zip" else "application/xml"
-        ) ?: throw RuntimeException("Failed to upload processed file to gs://$outputBucket/$objectName")
+        )
 
         logger.info("Dataset processing complete. Added $totalAdded ServiceLinks total. Output: gs://$outputBucket/$objectName")
         return totalAdded

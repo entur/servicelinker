@@ -72,7 +72,7 @@ class ZipHandlingTest {
         val testZip = createTestZip()
 
         coEvery { mockGcsService.downloadFile("test-bucket", "test.zip") } returns testZip
-        coEvery { mockGcsService.uploadFile(any<ByteArray>(), any<String>(), any<String>(), any()) } returns "gs://test-output/test.zip"
+        coEvery { mockGcsService.uploadFile(any<ByteArray>(), any<String>(), any<String>(), any()) } returns Unit
 
         val addedCount = serviceLinkProducerService.processDataset("test-bucket", "test.zip")
 
@@ -88,7 +88,6 @@ class ZipHandlingTest {
         coEvery { mockGcsService.downloadFile("test-bucket", "test.zip") } returns testZip
         coEvery { mockGcsService.uploadFile(any<ByteArray>(), any<String>(), any<String>(), any()) } answers {
             uploadedData = firstArg()
-            "gs://test-output/test.zip"
         }
 
         serviceLinkProducerService.processDataset("test-bucket", "test.zip")
@@ -115,7 +114,7 @@ class ZipHandlingTest {
         val sampleXml = ClassPathResource("sample-netex.xml").inputStream.readBytes()
 
         coEvery { mockGcsService.downloadFile("test-bucket", "test.xml") } returns sampleXml
-        coEvery { mockGcsService.uploadFile(any<ByteArray>(), any<String>(), any<String>(), any()) } returns "gs://test-output/test.xml"
+        coEvery { mockGcsService.uploadFile(any<ByteArray>(), any<String>(), any<String>(), any()) } returns Unit
 
         val addedCount = serviceLinkProducerService.processDataset("test-bucket", "test.xml")
 
@@ -127,7 +126,7 @@ class ZipHandlingTest {
         val testZip = createTestZip()
 
         coEvery { mockGcsService.downloadFile("test-bucket", "dataset.netex") } returns testZip
-        coEvery { mockGcsService.uploadFile(any<ByteArray>(), any<String>(), any<String>(), any()) } returns "gs://test-output/dataset.netex"
+        coEvery { mockGcsService.uploadFile(any<ByteArray>(), any<String>(), any<String>(), any()) } returns Unit
 
         val addedCount = serviceLinkProducerService.processDataset("test-bucket", "dataset.netex")
 

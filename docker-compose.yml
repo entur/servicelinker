@@ -33,7 +33,16 @@ services:
         condition: service_healthy
       fake-gcs:
         condition: service_healthy
-    entrypoint: ["bash", "-c", "curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/servicelinker-inbound && curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/servicelinker-outbound && curl -s -X PUT -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/servicelinker-inbound\"}' http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/servicelinker-inbound-sub && curl -s -X PUT -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/servicelinker-outbound\"}' http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/servicelinker-outbound-sub && curl -s -X POST -H 'Content-Type: application/json' -d '{\"name\":\"marduk-exchange\"}' http://fake-gcs:4443/storage/v1/b && curl -s -X POST -H 'Content-Type: application/json' -d '{\"name\":\"servicelinker-exchange\"}' http://fake-gcs:4443/storage/v1/b && echo '' && echo 'PubSub topics, subscriptions, and GCS buckets created.'"]
+    entrypoint: ["bash", "-c",
+                 "curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/servicelinker-inbound && \
+                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/servicelinker-outbound && \
+                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/servicelinker-inbound-sub \
+                       -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/servicelinker-inbound\"}' && \
+                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/servicelinker-outbound-sub \
+                       -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/servicelinker-outbound\"}' && \
+                  curl -s -X POST http://fake-gcs:4443/storage/v1/b -H 'Content-Type: application/json' -d '{\"name\":\"marduk-exchange\"}' && \
+                  curl -s -X POST http://fake-gcs:4443/storage/v1/b -H 'Content-Type: application/json' -d '{\"name\":\"servicelinker-exchange\"}' && \
+                  echo '' && echo 'PubSub topics, subscriptions, and GCS buckets created.'"]
 
   servicelinker:
     build: .
@@ -43,15 +52,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPRING_PROFILES_ACTIVE: local
-      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+      SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
       STORAGE_EMULATOR_HOST: http://fake-gcs:4443
-      GCP_PROJECT_ID: local-project
-      GCS_INPUT_BUCKET: marduk-exchange
-      GCS_OUTPUT_BUCKET: servicelinker-exchange
-      PUBSUB_INBOUND_SUBSCRIPTION: servicelinker-inbound-sub
-      PUBSUB_OUTBOUND_TOPIC: servicelinker-outbound
-      OSRM_URL_DEFAULT: https://router.project-osrm.org
 
 volumes:
   gcs-data:

@@ -44,7 +44,7 @@ class NetexProcessor(
             val route = try {
                 osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
             } catch (e: Exception) {
-                logger.warn("OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}", e)
+                logger.warn("OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}")
                 null
             }
             val serviceLinkElement = createServiceLinkElement(document, pair, route)

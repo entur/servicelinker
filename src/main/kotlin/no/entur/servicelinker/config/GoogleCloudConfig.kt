@@ -10,7 +10,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.context.annotation.Profile
 
 @Configuration
 class GoogleCloudConfig {
@@ -18,15 +17,16 @@ class GoogleCloudConfig {
     private val logger = LoggerFactory.getLogger(GoogleCloudConfig::class.java)
 
     /**
-     * Overrides Spring Cloud GCP's auto-configured CredentialsProvider (which is
-     * @ConditionalOnMissingBean) so it doesn't attempt to load real GCP credentials
-     * when running against emulators.
+     * Overrides Spring Cloud GCP's auto-configured CredentialsProvider (@ConditionalOnMissingBean).
+     * Uses NoCredentials when PUBSUB_EMULATOR_HOST is set (local dev), real credentials otherwise.
      */
     @Bean
-    @Profile("local")
     fun googleCredentials(): CredentialsProvider {
-        logger.info("Local profile active, using NoCredentialsProvider")
-        return NoCredentialsProvider.create()
+        if (!System.getenv("STORAGE_EMULATOR_HOST").isNullOrBlank()) {
+            logger.info("Emulator environment detected, using NoCredentialsProvider")
+            return NoCredentialsProvider.create()
+        }
+        return CredentialsProvider { GoogleCredentials.getApplicationDefault() }
     }
 
     @Bean

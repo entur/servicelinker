@@ -64,15 +64,14 @@ The docker-compose setup includes an init container that creates PubSub topics/s
 
 ### Running the app directly (outside Docker)
 
-For faster iteration you can run the app directly with the `local` profile and emulators running in Docker:
+For faster iteration you can run the app directly with emulators running in Docker:
 
 ```bash
 # Start only the emulators (init creates topics, subscriptions, and buckets)
 docker-compose up pubsub-emulator fake-gcs emulator-init
 
-# Run the app with local profile
-SPRING_PROFILES_ACTIVE=local \
-PUBSUB_EMULATOR_HOST=localhost:8085 \
+# Run the app pointing at the emulators
+SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST=localhost:8085 \
 STORAGE_EMULATOR_HOST=http://localhost:4443 \
 ./gradlew bootRun
 ```
@@ -205,47 +204,48 @@ curl http://localhost:8080/actuator/health
 
 ## Configuration
 
-All configuration is via environment variables with sensible defaults in `application.properties`:
+Configuration uses Spring profiles activated by the `COMMON_ENV` environment variable set by k8s. When `COMMON_ENV` is not set (local development), no profile is active and the defaults in `application.properties` apply.
 
-### GCP / PubSub
+### Profiles
 
-| Variable | Default | Description |
+| `COMMON_ENV` | Profile file | GCP project | OSRM | Logging |
+|--------------|-------------|-------------|------|---------|
+| (unset) | `application.properties` | `local-project` | Public OSRM | DEBUG |
+| `dev` | `application-dev.properties` | `ent-servicelinker-dev` | Internal OSRM | DEBUG |
+| `tst` | `application-tst.properties` | `ent-servicelinker-tst` | Internal OSRM | DEBUG |
+| `prd` | `application-prd.properties` | `ent-servicelinker-prd` | Internal OSRM | INFO |
+
+### Shared defaults (application.properties)
+
+| Property | Default | Description |
 |----------|---------|-------------|
-| `GCP_PROJECT_ID` | `entur-project` | GCP project ID |
-| `GOOGLE_APPLICATION_CREDENTIALS` | (empty) | Path to service account JSON |
-| `PUBSUB_INBOUND_SUBSCRIPTION` | `servicelinker-inbound-sub` | Subscription to listen on |
-| `PUBSUB_OUTBOUND_TOPIC` | `servicelinker-outbound` | Topic to publish completion messages to |
+| `servicelinker.pubsub.inbound.subscription` | `servicelinker-inbound-sub` | PubSub subscription to listen on |
+| `servicelinker.pubsub.outbound.topic` | `servicelinker-outbound` | PubSub topic for completion messages |
+| `gcs.bucket.input` | `marduk-exchange` | GCS bucket for input datasets |
+| `gcs.bucket.output` | `servicelinker-exchange` | GCS bucket for processed output |
+| `osrm.timeout` | `30000` | OSRM HTTP timeout in milliseconds |
+| `osrm.cache-routes` | `true` | Cache OSRM route results in memory |
 
-### GCS
+### OSRM per-mode routing
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GCS_INPUT_BUCKET` | `marduk-exchange` | Bucket to read input datasets from |
-| `GCS_OUTPUT_BUCKET` | `servicelinker-exchange` | Bucket to write processed datasets to |
+Separate OSRM instances per transport mode. Each instance has its own network data but all expose the `/route/v1/driving/` endpoint. The base defaults (public OSRM) are overridden per environment profile with internal service URLs.
 
-### OSRM
+| Property | Transport modes |
+|----------|-----------------|
+| `osrm.urls.bus` | BUS, COACH |
+| `osrm.urls.rail` | RAIL, TRAM, METRO |
+| `osrm.urls.ferry` | FERRY |
+| `osrm.urls.water` | WATER |
+| `osrm.urls.default` | Fallback for unknown modes |
 
-Separate OSRM instances per transport mode. Each instance has its own network data but all expose the `/route/v1/driving/` endpoint.
+### Emulator configuration
 
-| Variable | Default | Transport modes |
-|----------|---------|-----------------|
-| `OSRM_URL_BUS` | `https://router.project-osrm.org` | BUS, COACH |
-| `OSRM_URL_RAIL` | `https://router.project-osrm.org` | RAIL, TRAM, METRO |
-| `OSRM_URL_FERRY` | `https://router.project-osrm.org` | FERRY |
-| `OSRM_URL_WATER` | `https://router.project-osrm.org` | WATER |
-| `OSRM_URL_DEFAULT` | `https://router.project-osrm.org` | Fallback for unknown modes |
-| `OSRM_TIMEOUT` | `30000` | HTTP timeout in milliseconds |
-| `OSRM_CACHE_ROUTES` | `true` | Cache OSRM route results in memory |
+For local development (docker-compose or running directly), these environment variables activate emulator mode:
 
-In production (k8s), these should point to the internal OSRM instances:
-
-```
-OSRM_URL_BUS=http://osrm-bus.prd.entur.internal
-OSRM_URL_RAIL=http://osrm-rail.prd.entur.internal
-OSRM_URL_FERRY=http://osrm-ferry.prd.entur.internal
-OSRM_URL_WATER=http://osrm-water.prd.entur.internal
-OSRM_URL_DEFAULT=http://osrm-car.prd.entur.internal
-```
+| Variable | Description |
+|----------|-------------|
+| `SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST` | PubSub emulator endpoint (e.g. `localhost:8085`). Routes PubSub traffic to emulator. |
+| `STORAGE_EMULATOR_HOST` | GCS emulator endpoint (e.g. `http://localhost:4443`). Also activates NoCredentials mode. |
 
 ---
 
@@ -331,62 +331,17 @@ docker build -t servicelinker .
 ./gradlew bootBuildImage
 ```
 
-### Dockerfile
+### CI/CD
 
-The Dockerfile is minimal: `eclipse-temurin:21-jre-alpine` base with the fat JAR copied in.
+Pushes to `main` trigger the GitHub Actions workflow (`.github/workflows/build.yml`):
 
-### Deploy to k8s dev
+1. **gradle-build** — builds and tests with `./gradlew build`, uploads JAR artifact
+2. **docker-build** — builds Docker image via `entur/gha-docker`
+3. **docker-push** — pushes image to registry (skipped on PRs)
+4. **scan** — security scan via `entur/gha-security`
+5. **deploy** — deploys to dev via Helm (`helm/servicelinker`) using `entur/gha-helm`
 
-Assuming you have a CI/CD pipeline that builds and pushes images, or you push manually:
-
-```bash
-# Build and tag for your registry
-./gradlew bootJar
-docker build -t eu.gcr.io/entur-project/servicelinker:dev .
-docker push eu.gcr.io/entur-project/servicelinker:dev
-
-# Apply k8s manifests (create these for your cluster)
-kubectl apply -f k8s/dev/
-```
-
-A typical k8s Deployment should set these environment variables:
-
-```yaml
-env:
-  - name: GCP_PROJECT_ID
-    value: "your-dev-project"
-  - name: PUBSUB_INBOUND_SUBSCRIPTION
-    value: "servicelinker-inbound-sub"
-  - name: PUBSUB_OUTBOUND_TOPIC
-    value: "servicelinker-outbound"
-  - name: GCS_INPUT_BUCKET
-    value: "marduk-exchange"
-  - name: GCS_OUTPUT_BUCKET
-    value: "servicelinker-exchange"
-  - name: OSRM_URL_BUS
-    value: "http://osrm-bus.dev.entur.internal"
-  - name: OSRM_URL_RAIL
-    value: "http://osrm-rail.dev.entur.internal"
-  - name: OSRM_URL_FERRY
-    value: "http://osrm-ferry.dev.entur.internal"
-  - name: OSRM_URL_WATER
-    value: "http://osrm-water.dev.entur.internal"
-  - name: OSRM_URL_DEFAULT
-    value: "http://osrm-car.dev.entur.internal"
-```
-
-Liveness and readiness probes should target the actuator endpoints:
-
-```yaml
-livenessProbe:
-  httpGet:
-    path: /actuator/health
-    port: 8080
-readinessProbe:
-  httpGet:
-    path: /actuator/health
-    port: 8080
-```
+Environment-specific config is handled by Spring profiles activated via `COMMON_ENV` (set in the Helm chart values per environment).
 
 ### IAM setup
 
@@ -403,8 +358,8 @@ The servicelinker service account needs:
 ### Verify the pod is running
 
 ```bash
-kubectl get pods -l app=servicelinker
-kubectl logs -l app=servicelinker --tail=50
+kubectl get pods -n servicelinker
+kubectl logs -l app=servicelinker -n servicelinker --tail=50
 ```
 
 Look for the log line `started bean 'inboundChannelAdapter'` to confirm PubSub is connected.
@@ -412,7 +367,7 @@ Look for the log line `started bean 'inboundChannelAdapter'` to confirm PubSub i
 ### Health check
 
 ```bash
-kubectl port-forward svc/servicelinker 8080:8080
+kubectl port-forward svc/servicelinker -n servicelinker 8080:8080
 curl http://localhost:8080/actuator/health
 ```
 
@@ -421,7 +376,7 @@ curl http://localhost:8080/actuator/health
 This bypasses PubSub and GCS entirely — useful for verifying that NeTEx processing and OSRM routing work:
 
 ```bash
-kubectl port-forward svc/servicelinker 8080:8080
+kubectl port-forward svc/servicelinker -n servicelinker 8080:8080
 
 curl -X POST http://localhost:8080/api/servicelink/process-xml \
   -H "Content-Type: application/xml" \
@@ -437,16 +392,16 @@ grep -c "ServiceLink" processed.xml
 Before running the full pipeline, verify that each OSRM instance is reachable from the servicelinker pod. Use a coordinate pair in Norway (Oslo area):
 
 ```bash
-kubectl exec -it deploy/servicelinker -- wget -qO- \
+kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
   "http://osrm-bus.dev.entur.internal/route/v1/driving/10.75,59.91;11.05,59.96?overview=false"
 
-kubectl exec -it deploy/servicelinker -- wget -qO- \
+kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
   "http://osrm-rail.dev.entur.internal/route/v1/driving/10.75,59.91;11.05,59.96?overview=false"
 
-kubectl exec -it deploy/servicelinker -- wget -qO- \
+kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
   "http://osrm-ferry.dev.entur.internal/route/v1/driving/10.75,59.91;11.05,59.96?overview=false"
 
-kubectl exec -it deploy/servicelinker -- wget -qO- \
+kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
   "http://osrm-water.dev.entur.internal/route/v1/driving/10.75,59.91;11.05,59.96?overview=false"
 ```
 
@@ -460,7 +415,7 @@ Open two terminals:
 
 ```bash
 # Terminal 1: stream servicelinker logs
-kubectl logs -l app=servicelinker --tail=0 -f
+kubectl logs -l app=servicelinker -n servicelinker --tail=0 -f
 ```
 
 ```bash
@@ -489,7 +444,7 @@ gsutil ls -l gs://marduk-exchange/test/sample-netex.xml
 
 ```bash
 gcloud pubsub topics publish servicelinker-inbound \
-  --project=YOUR_DEV_PROJECT \
+  --project=ent-servicelnk-dev \
   --attribute=objectName=test/sample-netex.xml \
   --attribute=bucketName=marduk-exchange \
   --attribute=correlationId=manual-dev-test-001 \
