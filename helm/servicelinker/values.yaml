@@ -3,7 +3,7 @@ common:
   shortname: servicelnk # Defined in https://github.com/entur/ror-tf-gcp-common-infrastructure/blob/main/.entur/servicelinker/app-servicelinker.yml
   team: team-ror
   ingress:
-    enabled: true
+    enabled: false
     trafficType: api
   service:
     internalPort: 8080  # What TCP port the application listens on the pod, must match the port in the Dockerfile
