@@ -52,7 +52,7 @@ class GoogleCloudConfig {
         }
         return StorageOptions.newBuilder()
             .setProjectId(projectId)
-            .setCredentials(credentialsProvider.credentials)
+            .setCredentials(credentialsProvider.credentials ?: NoCredentials.getInstance())
             .build()
             .service
     }
