@@ -18,7 +18,7 @@ class GoogleCloudConfig {
 
     /**
      * Overrides Spring Cloud GCP's auto-configured CredentialsProvider (@ConditionalOnMissingBean).
-     * Uses NoCredentials when PUBSUB_EMULATOR_HOST is set (local dev), real credentials otherwise.
+     * Uses NoCredentials when running against emulators or when no GCP credentials are available (CI/test).
      */
     @Bean
     fun googleCredentials(): CredentialsProvider {
@@ -26,12 +26,19 @@ class GoogleCloudConfig {
             logger.info("Emulator environment detected, using NoCredentialsProvider")
             return NoCredentialsProvider.create()
         }
-        return CredentialsProvider { GoogleCredentials.getApplicationDefault() }
+        return try {
+            val credentials = GoogleCredentials.getApplicationDefault()
+            CredentialsProvider { credentials }
+        } catch (e: Exception) {
+            logger.warn("No GCP credentials available, using NoCredentialsProvider: ${e.message}")
+            NoCredentialsProvider.create()
+        }
     }
 
     @Bean
     fun storage(
-        @Value("\${spring.cloud.gcp.project-id:local-project}") projectId: String
+        @Value("\${spring.cloud.gcp.project-id:local-project}") projectId: String,
+        credentialsProvider: CredentialsProvider
     ): Storage {
         val emulatorHost = System.getenv("STORAGE_EMULATOR_HOST")
         if (!emulatorHost.isNullOrBlank()) {
@@ -45,7 +52,7 @@ class GoogleCloudConfig {
         }
         return StorageOptions.newBuilder()
             .setProjectId(projectId)
-            .setCredentials(GoogleCredentials.getApplicationDefault())
+            .setCredentials(credentialsProvider.credentials)
             .build()
             .service
     }
