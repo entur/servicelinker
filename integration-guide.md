@@ -4,7 +4,7 @@ This document describes the existing Marduk-Ashur pipeline and how Servicelinker
 
 ## Pipeline Overview
 
-Marduk orchestrates NeTEx dataset processing. After Antu pre-validation succeeds, Marduk triggers Ashur to filter the dataset. Servicelinker will slot in after Ashur's filtering completes, before Marduk runs Antu post-validation.
+Marduk orchestrates NeTEx dataset processing. After Antu pre-validation succeeds, Marduk triggers Ashur to filter the dataset. Ashur writes the filtered result back to the marduk-exchange bucket and publishes a status message to Marduk. Marduk then triggers Servicelinker, which adds service links and publishes a status message back to Marduk. Finally, Marduk triggers Antu post-validation.
 
 ```
 Marduk                        Ashur                         Servicelinker
@@ -18,30 +18,34 @@ Marduk                        Ashur                         Servicelinker
   │                             │  3. Filter NeTEx data         │
   │                             │                               │
   │                             │  4. Upload filtered ZIP to    │
-  │                             │     ror-ashur-exchange-*      │
+  │                             │     marduk-exchange-* bucket  │
   │                             │                               │
-  │                             │  5. Publish SUCCESS to        │
-  │                             │     FilterNetexFileStatusQueue│
-  │                             ├──────────────────────────────►│
+  │  5. Consume SUCCESS from    │  5. Publish SUCCESS to        │
+  │     FilterNetexFileStatusQ  │     FilterNetexFileStatusQueue│
+  │◄────────────────────────────┤                               │
+  │                             │                               │
+  │  6. Publish to              │                               │
+  │     ServicelinkerInboundQ   │                               │
+  ├─────────────────────────────┼──────────────────────────────►│
   │                             │                               │
   │                             │           ┌───────────────────┤
-  │                             │           │ 6. Read filtered  │
+  │                             │           │ 7. Read filtered  │
   │                             │           │    ZIP from       │
-  │                             │           │    ror-ashur-     │
-  │                             │           │    exchange-*     │
+  │                             │           │    marduk-exchange│
   │                             │           │                   │
-  │                             │           │ 7. Process /      │
-  │                             │           │    link services  │
+  │                             │           │ 8. Add service    │
+  │                             │           │    links          │
   │                             │           │                   │
-  │                             │           │ 8. Upload result  │
+  │                             │           │ 9. Upload result  │
   │                             │           │    to servicelinker│
   │                             │           │    exchange bucket│
-  │                             │           │                   │
-  │  9. Consume status from     │           │ 8. Publish status │
-  │     ServicelinkerStatusQueue│           │    to Marduk      │
-  │◄────────────────────────────┼───────────┤                   │
-  │                             │           │                   │
-  │  10. Copy result from       │                               │
+  │                             │           └───────────────────┤
+  │                             │                               │
+  │  10. Consume status from    │          10. Publish status   │
+  │      ServicelinkerStatusQ   │              to Marduk        │
+  │◄────────────────────────────┼───────────────────────────────┤
+  │                             │                               │
+  │  11. Copy result from       │                               │
   │      servicelinker exchange │                               │
   │      bucket, trigger Antu   │                               │
   │      post-validation        │                               │
