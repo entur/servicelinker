@@ -164,6 +164,11 @@
                                     <ForBoarding>false</ForBoarding>
                                 </StopPointInJourneyPattern>
                             </pointsInSequence>
+                            <linksInSequence>
+                                <ServiceLinkInJourneyPattern id="FIN:ServiceLinkInJourneyPattern:1_to_2" version="1" order="1">
+                                    <ServiceLinkRef ref="FIN:ServiceLink:1" version="1"/>
+                                </ServiceLinkInJourneyPattern>
+                            </linksInSequence>
                         </JourneyPattern>
                     </journeyPatterns>
 

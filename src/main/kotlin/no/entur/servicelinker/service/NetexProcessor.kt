@@ -26,31 +26,65 @@ class NetexProcessor(
     suspend fun processNetexFile(inputStream: InputStream): Pair<ByteArray, Int> {
         logger.info("Starting NeTEx file processing")
         val document = parseXmlDocument(inputStream)
-        val stopPoints = extractStopPoints(document)
-        val existingServiceLinks = extractExistingServiceLinks(document)
-        val stationPairs = generateStationPairs(stopPoints, existingServiceLinks)
-        logger.info("Generated ${stationPairs.size} station pairs that need service links")
 
-        var addedCount = 0
+        val stopPointsMap = extractStopPoints(document).associateBy { it.id }
+        val existingServiceLinks = extractExistingServiceLinks(document)
+        val journeyPatterns = extractJourneyPatterns(document)
+
+        // Collect unique consecutive pairs from all JourneyPatterns
+        val neededPairs = mutableMapOf<String, StationPair>()
+        for ((_, stopRefIds) in journeyPatterns) {
+            for (i in 0 until stopRefIds.size - 1) {
+                val fromRef = stopRefIds[i]
+                val toRef = stopRefIds[i + 1]
+                val pairKey = "${fromRef}_${toRef}"
+                if (!existingServiceLinks.containsKey(pairKey) && !neededPairs.containsKey(pairKey)) {
+                    val from = stopPointsMap[fromRef]
+                    val to = stopPointsMap[toRef]
+                    if (from != null && to != null) {
+                        neededPairs[pairKey] = StationPair(from, to)
+                    }
+                }
+            }
+        }
+        logger.info("Found ${neededPairs.size} consecutive pairs that need new service links")
+
+        // Create ServiceLink elements for new pairs
         var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
         if (serviceLinksSection == null) {
-            val commonFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
+            val serviceFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
                 ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
                 ?: document.documentElement
             serviceLinksSection = document.createElement("serviceLinks")
-            commonFrame.appendChild(serviceLinksSection)
+            serviceFrame.appendChild(serviceLinksSection)
         }
-        for (pair in stationPairs) {
+
+        // allServiceLinks: pairKey → serviceLinkId (existing + newly created)
+        val allServiceLinks = existingServiceLinks.toMutableMap()
+        var addedCount = 0
+
+        for ((pairKey, pair) in neededPairs) {
             val route = try {
                 osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
             } catch (e: Exception) {
-                logger.warn("OSRM route failed, using direct line for ${pair.from.id} to ${pair.to.id}")
+                logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
                 null
+            }
+            if (route != null && route.distance > MAX_DISTANCE_METERS) {
+                logger.info("Skipping pair ${pair.from.id} → ${pair.to.id}: distance ${route.distance}m exceeds max")
+                continue
             }
             val serviceLinkElement = createServiceLinkElement(document, pair, route)
             serviceLinksSection.appendChild(serviceLinkElement)
+            allServiceLinks[pairKey] = serviceLinkElement.getAttribute("id")
             addedCount++
         }
+
+        // Add linksInSequence to each JourneyPattern
+        for ((jpElement, stopRefIds) in journeyPatterns) {
+            addLinksInSequence(document, jpElement, stopRefIds, allServiceLinks)
+        }
+
         ensureGmlNamespace(document)
         val modifiedXml = documentToByteArray(document)
         logger.info("NeTEx processing completed. Added $addedCount service links")
@@ -139,52 +173,124 @@ class NetexProcessor(
         }
     }
 
-    private fun extractExistingServiceLinks(document: Document): Set<String> {
-        val existingLinks = mutableSetOf<String>()
+    private fun extractExistingServiceLinks(document: Document): Map<String, String> {
+        val existingLinks = mutableMapOf<String, String>()
 
         val serviceLinks = document.getElementsByTagName("ServiceLink")
         for (i in 0 until serviceLinks.length) {
             val element = serviceLinks.item(i) as Element
-            val fromRef = getElementText(element, "FromPointRef")
-            val toRef = getElementText(element, "ToPointRef")
+            val serviceLinkId = element.getAttribute("id")
+            val fromRefElement = element.getElementsByTagName("FromPointRef").item(0) as? Element
+            val toRefElement = element.getElementsByTagName("ToPointRef").item(0) as? Element
+            val fromRef = fromRefElement?.getAttribute("ref")
+            val toRef = toRefElement?.getAttribute("ref")
 
-            if (fromRef != null && toRef != null) {
-                existingLinks.add("${fromRef}_${toRef}")
+            if (!fromRef.isNullOrBlank() && !toRef.isNullOrBlank()) {
+                existingLinks["${fromRef}_${toRef}"] = serviceLinkId
             }
         }
 
         return existingLinks
     }
 
-    private suspend fun generateStationPairs(
-        stopPoints: List<StopPoint>,
-        existingServiceLinks: Set<String>
-    ): List<StationPair> {
-        val pairs = mutableListOf<StationPair>()
+    private fun extractJourneyPatterns(document: Document): List<Pair<Element, List<String>>> {
+        val result = mutableListOf<Pair<Element, List<String>>>()
 
-        for (i in stopPoints.indices) {
-            for (j in i + 1 until stopPoints.size) {
-                val from = stopPoints[i]
-                val to = stopPoints[j]
+        val journeyPatterns = document.getElementsByTagName("JourneyPattern")
+        for (i in 0 until journeyPatterns.length) {
+            val jpElement = journeyPatterns.item(i) as Element
+            val stopPointsInSequence = jpElement.getElementsByTagName("StopPointInJourneyPattern")
 
-                val pairKey = "${from.id}_${to.id}"
-                val reversePairKey = "${to.id}_${from.id}"
+            data class OrderedRef(val order: Int, val ref: String)
 
-                if (!existingServiceLinks.contains(pairKey) && !existingServiceLinks.contains(reversePairKey)) {
-                    val route = try {
-                        osrmService.calculateRoute(from.coordinate, to.coordinate, from.transportMode)
-                    } catch (_: Exception) {
-                        null
-                    }
+            val orderedRefs = mutableListOf<OrderedRef>()
+            for (j in 0 until stopPointsInSequence.length) {
+                val spijp = stopPointsInSequence.item(j) as Element
+                val order = spijp.getAttribute("order")?.toIntOrNull() ?: (j + 1)
+                val refElement = spijp.getElementsByTagName("ScheduledStopPointRef").item(0) as? Element
+                val ref = refElement?.getAttribute("ref")
+                if (ref != null) {
+                    orderedRefs.add(OrderedRef(order, ref))
+                }
+            }
 
-                    if (route != null && route.distance <= MAX_DISTANCE_METERS) {
-                        pairs.add(StationPair(from, to))
-                    }
+            val stopRefIds = orderedRefs.sortedBy { it.order }.map { it.ref }
+            if (stopRefIds.size >= 2) {
+                result.add(jpElement to stopRefIds)
+            }
+        }
+
+        return result
+    }
+
+    private fun addLinksInSequence(
+        document: Document,
+        jpElement: Element,
+        stopRefIds: List<String>,
+        allServiceLinks: Map<String, String>
+    ) {
+        val codespace = jpElement.getAttribute("id").split(":").firstOrNull() ?: return
+
+        // Index existing ServiceLinkInJourneyPattern entries by their ServiceLinkRef
+        val existingLinksInSeqElement = jpElement.getElementsByTagName("linksInSequence").let { nodes ->
+            (0 until nodes.length).map { nodes.item(it) }.firstOrNull { it.parentNode == jpElement } as? Element
+        }
+        val existingByServiceLinkId = mutableMapOf<String, Element>()
+        if (existingLinksInSeqElement != null) {
+            val slijps = existingLinksInSeqElement.getElementsByTagName("ServiceLinkInJourneyPattern")
+            for (i in 0 until slijps.length) {
+                val slijp = slijps.item(i) as Element
+                val ref = (slijp.getElementsByTagName("ServiceLinkRef").item(0) as? Element)
+                    ?.getAttribute("ref")
+                if (ref != null) {
+                    existingByServiceLinkId[ref] = slijp
                 }
             }
         }
 
-        return pairs
+        // Build new linksInSequence: reuse existing entries, create new ones for missing pairs
+        val linksInSequence = document.createElement("linksInSequence")
+        var order = 1
+
+        for (i in 0 until stopRefIds.size - 1) {
+            val fromRef = stopRefIds[i]
+            val toRef = stopRefIds[i + 1]
+            val pairKey = "${fromRef}_${toRef}"
+            val serviceLinkId = allServiceLinks[pairKey] ?: continue
+
+            val existing = existingByServiceLinkId[serviceLinkId]
+            if (existing != null) {
+                // Reuse existing entry, just update the order
+                val imported = document.importNode(existing, true) as Element
+                imported.setAttribute("order", order.toString())
+                linksInSequence.appendChild(imported)
+            } else {
+                val fromLocalId = fromRef.split(":").lastOrNull() ?: fromRef
+                val toLocalId = toRef.split(":").lastOrNull() ?: toRef
+                val slijpId = "$codespace:ServiceLinkInJourneyPattern:${fromLocalId}_to_${toLocalId}"
+
+                val slijpElement = document.createElement("ServiceLinkInJourneyPattern")
+                slijpElement.setAttribute("id", slijpId)
+                slijpElement.setAttribute("version", "1")
+                slijpElement.setAttribute("order", order.toString())
+
+                val serviceLinkRef = document.createElement("ServiceLinkRef")
+                serviceLinkRef.setAttribute("ref", serviceLinkId)
+                serviceLinkRef.setAttribute("version", "1")
+                slijpElement.appendChild(serviceLinkRef)
+
+                linksInSequence.appendChild(slijpElement)
+            }
+            order++
+        }
+
+        // Replace old linksInSequence with the merged one
+        if (existingLinksInSeqElement != null) {
+            jpElement.removeChild(existingLinksInSeqElement)
+        }
+        if (linksInSequence.hasChildNodes()) {
+            jpElement.appendChild(linksInSequence)
+        }
     }
 
     private fun createServiceLinkElement(document: Document, pair: StationPair, route: OSRMRoute?): Element {

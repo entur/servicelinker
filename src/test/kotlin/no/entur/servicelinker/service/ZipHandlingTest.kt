@@ -76,8 +76,8 @@ class ZipHandlingTest {
 
         val addedCount = serviceLinkProducerService.processDataset("test-bucket", "test.zip")
 
-        // Each XML file has 3 stop points → 3 pairs, so 3 * 2 files = 6
-        assertTrue(addedCount > 0, "Should have added service links from ZIP contents")
+        // Each XML has 1 JourneyPattern (3 stops, 1 existing link), so 1 new link per file = 2 total
+        assertEquals(2, addedCount, "Should have added service links from ZIP contents")
     }
 
     @Test
