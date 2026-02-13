@@ -1,54 +1,61 @@
-# Integrating Servicelinker After Ashur in the Marduk Pipeline
+# Integrating Servicelinker into the Marduk Pipeline
 
-This document describes the existing Marduk-Ashur pipeline and how Servicelinker fits in. It covers the full data flow, resource ownership, Terraform configuration, IAM permissions, and message contracts.
+This document describes the Marduk pipeline and how Servicelinker fits in. It covers the full data flow, resource ownership, Terraform configuration, IAM permissions, and message contracts.
 
 ## Pipeline Overview
 
-Marduk orchestrates NeTEx dataset processing. After Antu pre-validation succeeds, Marduk triggers Ashur to filter the dataset. Ashur writes the filtered result back to the marduk-exchange bucket and publishes a status message to Marduk. Marduk then triggers Servicelinker, which adds service links and publishes a status message back to Marduk. Finally, Marduk triggers Antu post-validation.
+Marduk orchestrates NeTEx dataset processing. After Antu pre-validation succeeds, Marduk triggers Servicelinker to add ServiceLinks to the validated dataset. Servicelinker writes the enriched result to its exchange bucket and publishes a status message back to Marduk. Marduk then triggers Ashur to filter the enriched dataset. After Ashur completes, Marduk triggers Antu post-validation.
+
+**Pipeline order:** Antu pre-validation → **Servicelinker** → Ashur filtering → Antu post-validation
+
+In marduk, the insertion point is `AntuNetexValidationStatusRouteBuilder.java`: the `direct:antuNetexValidationComplete` route currently flows directly to `direct:ashurNetexFilterAfterPreValidation`. Servicelinker is inserted between these two.
 
 ```
-Marduk                        Ashur                         Servicelinker
-  │                             │                               │
-  │  1. Publish to              │                               │
-  │     FilterNetexFileQueue    │                               │
-  ├────────────────────────────►│                               │
-  │                             │  2. Read NeTEx ZIP from       │
-  │                             │     marduk-exchange-* bucket  │
-  │                             │                               │
-  │                             │  3. Filter NeTEx data         │
-  │                             │                               │
-  │                             │  4. Upload filtered ZIP to    │
-  │                             │     marduk-exchange-* bucket  │
-  │                             │                               │
-  │  5. Consume SUCCESS from    │  5. Publish SUCCESS to        │
-  │     FilterNetexFileStatusQ  │     FilterNetexFileStatusQueue│
-  │◄────────────────────────────┤                               │
-  │                             │                               │
-  │  6. Publish to              │                               │
-  │     ServicelinkerInboundQ   │                               │
-  ├─────────────────────────────┼──────────────────────────────►│
-  │                             │                               │
-  │                             │           ┌───────────────────┤
-  │                             │           │ 7. Read filtered  │
-  │                             │           │    ZIP from       │
-  │                             │           │    marduk-exchange│
-  │                             │           │                   │
-  │                             │           │ 8. Add service    │
-  │                             │           │    links          │
-  │                             │           │                   │
-  │                             │           │ 9. Upload result  │
-  │                             │           │    to servicelinker│
-  │                             │           │    exchange bucket│
-  │                             │           └───────────────────┤
-  │                             │                               │
-  │  10. Consume status from    │          10. Publish status   │
-  │      ServicelinkerStatusQ   │              to Marduk        │
-  │◄────────────────────────────┼───────────────────────────────┤
-  │                             │                               │
-  │  11. Copy result from       │                               │
-  │      servicelinker exchange │                               │
-  │      bucket, trigger Antu   │                               │
-  │      post-validation        │                               │
+Marduk                    Servicelinker                   Ashur
+  │                            │                            │
+  │  (Antu pre-validation OK)  │                            │
+  │                            │                            │
+  │  1. Publish to             │                            │
+  │     ServicelinkerInboundQ  │                            │
+  ├───────────────────────────►│                            │
+  │                            │                            │
+  │                    ┌───────┤                            │
+  │                    │ 2. Read pre-validated              │
+  │                    │    ZIP from marduk-exchange        │
+  │                    │                                    │
+  │                    │ 3. Add ServiceLinks                │
+  │                    │                                    │
+  │                    │ 4. Upload enriched ZIP to          │
+  │                    │    servicelinker-exchange          │
+  │                    └───────┤                            │
+  │                            │                            │
+  │  5. Consume SUCCESS from   │  5. Publish SUCCESS to     │
+  │     ServicelinkerStatusQ   │     ServicelinkerStatusQ   │
+  │◄───────────────────────────┤                            │
+  │                            │                            │
+  │  6. Copy result from       │                            │
+  │     servicelinker-exchange │                            │
+  │     to marduk-exchange     │                            │
+  │                            │                            │
+  │  7. Publish to             │                            │
+  │     FilterNetexFileQueue   │                            │
+  ├────────────────────────────┼───────────────────────────►│
+  │                            │                            │
+  │                            │    8. Read enriched ZIP    │
+  │                            │       from marduk-exchange │
+  │                            │                            │
+  │                            │    9. Filter NeTEx data    │
+  │                            │                            │
+  │                            │   10. Upload filtered ZIP  │
+  │                            │       to ashur-exchange    │
+  │                            │                            │
+  │  11. Consume SUCCESS from  │   11. Publish SUCCESS to   │
+  │      FilterNetexFileStatusQ│       FilterNetexFileStatusQ
+  │◄───────────────────────────┼────────────────────────────┤
+  │                            │                            │
+  │  12. Copy filtered result, │                            │
+  │      trigger Antu          │                            │
+  │      post-validation       │                            │
 ```
 
 ## Existing Resources: What Already Exists
@@ -59,9 +66,9 @@ Marduk                        Ashur                         Servicelinker
 |---|---|
 | **GCP project** | `ent-marduk-{dev,tst,prd}` |
 | **Created by** | Marduk Terraform (`entur/marduk`, `terraform/pubsub.tf`) |
-| **Publisher** | Marduk, after Antu pre-validation succeeds (only when experimental import is enabled) |
+| **Publisher** | Marduk, after Servicelinker completes (only when experimental import is enabled) |
 | **Subscriber** | Ashur (subscription created in `entur/ashur`, `terraform/pubsub.tf`) |
-| **Relevance to Servicelinker** | None directly — Servicelinker does not interact with this topic |
+| **Relevance to Servicelinker** | Marduk publishes to this topic after Servicelinker completes |
 
 **Message attributes set by Marduk:**
 
@@ -82,7 +89,7 @@ Marduk                        Ashur                         Servicelinker
 | **Bucket** | `marduk-exchange-*` (see C below) |
 | **Content** | ZIP archive of NeTEx XML files (service journeys, stops, routes) |
 | **Created by** | Marduk copies the file to the exchange bucket before publishing to topic A |
-| **Relevance to Servicelinker** | None directly — Ashur reads this, not Servicelinker |
+| **Relevance to Servicelinker** | Servicelinker reads the pre-validated NeTEx ZIP from this bucket |
 
 ### C — Source GCS Bucket: `marduk-exchange-*`
 
@@ -92,7 +99,7 @@ Marduk                        Ashur                         Servicelinker
 | **GCP project** | `ent-marduk-{dev,tst,prd}` |
 | **Created by** | External infrastructure (not in `entur/marduk` or `entur/ashur` Terraform — passed as variable) |
 | **IAM** | Ashur SA granted `roles/storage.objectViewer` (in Marduk's `terraform/iam.tf`) |
-| **Relevance to Servicelinker** | None — Servicelinker reads from the Ashur exchange bucket, not from Marduk's |
+| **Relevance to Servicelinker** | Servicelinker needs `roles/storage.objectViewer` on this bucket to read the pre-validated NeTEx file |
 
 ### D — Ashur Output Files
 
@@ -104,7 +111,7 @@ Ashur produces three artifacts per filtering run:
 | Entities report | `{codespace}/{correlationId}/{netexSource}/entities.txt` | Internal bucket only | List of entity IDs retained after filtering |
 | Filtering report | `reports/{codespace}/filtering-report-{correlationId}.json` | Internal bucket only | JSON: `correlationId`, `codespace`, `status`, `reason`, `created` |
 
-**The filtered ZIP is the file Servicelinker will consume.** Its path is communicated via the `FilteredNetexFilePath` attribute in the status message on topic F.
+The filtered ZIP is consumed by Marduk, which copies it and triggers post-validation.
 
 ### E — Ashur GCS Buckets
 
@@ -122,7 +129,6 @@ Two buckets, both owned by Ashur:
 | **Settings** | Uniform bucket-level access, public access prevention enforced, versioning off, logging enabled |
 | **IAM on exchange bucket** | Marduk SA granted `roles/storage.objectViewer` (in Ashur's `terraform/iam.tf`) |
 
-**Servicelinker will need read access to the exchange bucket** — see [Permissions](#permissions-servicelinker-will-need) below.
 
 ### F — Status Pub/Sub Topic: `FilterNetexFileStatusQueue`
 
@@ -147,18 +153,20 @@ Two buckets, both owned by Ashur:
 3. Copies it to Antu's validation bucket
 4. Triggers Antu post-validation
 
-**When Servicelinker is inserted, Marduk's SUCCESS handler must be modified** to wait for Servicelinker's output instead of immediately triggering post-validation.
+This flow remains unchanged — Ashur filtering now runs on the ServiceLink-enriched dataset (produced by Servicelinker), but the post-Ashur flow stays the same.
 
 ## Environment Matrix
 
 | | Dev | Test | Production |
 |---|---|---|---|
 | **Marduk GCP project** | `ent-marduk-dev` | `ent-marduk-tst` | `ent-marduk-prd` |
+| **Servicelinker GCP project** | `ent-servicelnk-dev` | `ent-servicelnk-tst` | `ent-servicelnk-prd` |
 | **Ashur GCP project** | `ent-ashur-dev` | `ent-ashur-tst` | `ent-ashur-prd` |
 | **Marduk exchange bucket** | `marduk-exchange-dev` | `marduk-exchange-test` | `marduk-exchange-production` |
 | **Ashur internal bucket** | `ror-ashur-internal-gcp-dev` | `ror-ashur-internal-gcp-tst` | `ror-ashur-internal-gcp-prd` |
 | **Ashur exchange bucket** | `ror-ashur-exchange-gcp-dev` | `ror-ashur-exchange-gcp-tst` | `ror-ashur-exchange-gcp-prd` |
 | **Marduk SA** | `application@ent-marduk-dev.iam.gserviceaccount.com` | `application@ent-marduk-tst.iam.gserviceaccount.com` | `application@ent-marduk-prd.iam.gserviceaccount.com` |
+| **Servicelinker SA** | `application@ent-servicelnk-dev.iam.gserviceaccount.com` | `application@ent-servicelnk-tst.iam.gserviceaccount.com` | `application@ent-servicelnk-prd.iam.gserviceaccount.com` |
 | **Ashur SA** | `application@ent-ashur-dev.iam.gserviceaccount.com` | `application@ent-ashur-tst.iam.gserviceaccount.com` | `application@ent-ashur-prd.iam.gserviceaccount.com` |
 
 ## Service Accounts & IAM: How Cross-Project Access Works
@@ -181,8 +189,8 @@ Based on the Ashur/Marduk pattern, Servicelinker will need:
 
 | Access | Granted by | What to add |
 |---|---|---|
-| Read `ror-ashur-exchange-gcp-*` | `entur/ashur` `terraform/iam.tf` | `google_storage_bucket_iam_member` granting Servicelinker SA `roles/storage.objectViewer` on the exchange bucket |
-| Publish to a status topic in Marduk | `entur/marduk` `terraform/iam.tf` | `google_pubsub_topic_iam_member` granting Servicelinker SA `roles/pubsub.publisher` on the new status topic |
+| Read `marduk-exchange-*` | `entur/marduk` `terraform/iam.tf` | `google_storage_bucket_iam_member` granting Servicelinker SA `roles/storage.objectViewer` on the exchange bucket |
+| Publish to `ServicelinkerStatusQueue` in Marduk | `entur/marduk` `terraform/iam.tf` | `google_pubsub_topic_iam_member` granting Servicelinker SA `roles/pubsub.publisher` on the status topic |
 
 ### Servicelinker must grant (in its own Terraform)
 
@@ -196,14 +204,16 @@ Based on the Ashur/Marduk pattern, Servicelinker will need:
 |---|---|---|
 | Internal GCS bucket | `google_storage_bucket` | For intermediate artifacts, following the `ror-servicelinker-internal-gcp-{suffix}` naming pattern |
 | Exchange GCS bucket | `google_storage_bucket` | For output consumed by Marduk, following `ror-servicelinker-exchange-gcp-{suffix}` |
-| Subscription to `FilterNetexFileStatusQueue` | `google_pubsub_subscription` | Cross-project subscription in Servicelinker's project to the topic in Marduk's project (or a new dedicated topic — see below) |
+| Subscription to `ServicelinkerInboundQueue` | `google_pubsub_subscription` | Cross-project subscription in Servicelinker's project to the inbound topic in Marduk's project |
 
 ### New resources to create in Marduk's Terraform
 
 | Resource | Type | Notes |
 |---|---|---|
-| Topic `ServicelinkerStatusQueue` (or similar) | `google_pubsub_topic` | For Servicelinker to publish status back to Marduk |
-| IAM: Servicelinker SA → publisher on that topic | `google_pubsub_topic_iam_member` | `roles/pubsub.publisher` |
+| Topic `ServicelinkerInboundQueue` | `google_pubsub_topic` | For Marduk to trigger Servicelinker after pre-validation |
+| Topic `ServicelinkerStatusQueue` | `google_pubsub_topic` | For Servicelinker to publish status back to Marduk |
+| IAM: Servicelinker SA → publisher on status topic | `google_pubsub_topic_iam_member` | `roles/pubsub.publisher` |
+| Subscription to `ServicelinkerStatusQueue` | `google_pubsub_subscription` | For Marduk to consume Servicelinker status messages |
 
 ## Terraform Patterns to Follow
 
@@ -218,27 +228,26 @@ All three repos use the same conventions:
 
 ## Message Contract
 
-### Input: What Servicelinker Receives from Ashur (via `FilterNetexFileStatusQueue`)
+### Input: What Servicelinker Receives from Marduk (via `ServicelinkerInboundQueue`)
 
-On `SUCCESS`, the message attributes are:
+After Antu pre-validation succeeds, Marduk publishes a message to trigger Servicelinker. The message attributes are:
 
 | Attribute | Key | Description |
 |---|---|---|
 | Correlation ID | `RutebankenCorrelationId` | UUID for end-to-end tracking |
-| Codespace | `EnturDatasetReferential` | Dataset codespace |
-| Status | `Status` | `SUCCESS` / `FAILED` / `STARTED` |
-| Filtered file path | `FilteredNetexFilePath` | Path to filtered ZIP in `ror-ashur-exchange-gcp-*` (e.g. `{codespace}/{corrId}/{source}/filtered_{file}.zip`) |
+| File path | `RutebankenTargetFileHandle` | Path to pre-validated NeTEx ZIP in `marduk-exchange-*` (e.g. `outbound/netex/rb_avi/rb_avi-aggregated-netex.zip`) |
+| Codespace | `EnturDatasetReferential` | Dataset codespace (prefixed `rb_`) |
 
-### Output: What Servicelinker Should Publish Back to Marduk
+### Output: What Servicelinker Publishes Back to Marduk (via `ServicelinkerStatusQueue`)
 
-Following the same pattern Ashur uses, Servicelinker should publish status messages with:
+Following the same pattern Ashur uses, Servicelinker publishes status messages with:
 
 | Attribute | Description |
 |---|---|
 | `RutebankenCorrelationId` | Pass through from input |
 | `EnturDatasetReferential` | Pass through from input |
 | `Status` | `STARTED`, `SUCCESS`, or `FAILED` |
-| `LinkedNetexFilePath` (or similar) | Path to the output file in the Servicelinker exchange bucket |
+| `LinkedNetexFilePath` | Path to the enriched file in the Servicelinker exchange bucket |
 | `LinkingFailureReason` | Error message (on `FAILED` only) |
 
 ## Key Source Files in Related Repos
@@ -247,10 +256,10 @@ Following the same pattern Ashur uses, Servicelinker should publish status messa
 
 | File | What it does |
 |---|---|
-| `terraform/pubsub.tf` | Creates both Pub/Sub topics (`FilterNetexFileQueue`, `FilterNetexFileStatusQueue`) |
-| `terraform/iam.tf` | Grants Ashur SA publish access to status topic + read access to exchange bucket |
-| `src/.../AntuNetexValidationStatusRouteBuilder.java` | Publishes to `FilterNetexFileQueue` after pre-validation |
-| `src/.../AshurFilteringStatusRouteBuilder.java` | Consumes from `FilterNetexFileStatusQueue`, copies result, triggers post-validation. **This is the file that needs modification to insert Servicelinker.** |
+| `terraform/pubsub.tf` | Creates Pub/Sub topics (`FilterNetexFileQueue`, `FilterNetexFileStatusQueue`). **New topics for Servicelinker go here.** |
+| `terraform/iam.tf` | Grants Ashur SA publish access to status topic + read access to exchange bucket. **Servicelinker SA grants go here.** |
+| `src/.../AntuNetexValidationStatusRouteBuilder.java` | Routes from `direct:antuNetexValidationComplete` to `direct:ashurNetexFilterAfterPreValidation`. **This is the file that needs modification to insert Servicelinker** (publish to `ServicelinkerInboundQueue` instead of going directly to Ashur). |
+| `src/.../AshurFilteringStatusRouteBuilder.java` | Consumes from `FilterNetexFileStatusQueue`, copies result, triggers post-validation |
 | `src/.../Constants.java` | Defines all header/attribute constants |
 
 ### entur/ashur

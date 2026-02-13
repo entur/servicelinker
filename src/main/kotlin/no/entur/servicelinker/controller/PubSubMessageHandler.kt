@@ -16,8 +16,7 @@ class PubSubMessageHandler(
     private val serviceLinkProducerService: ServiceLinkProducerService,
     private val pubSubTemplate: PubSubTemplate,
     @Value("\${servicelinker.pubsub.outbound.topic}") private val outboundTopic: String,
-    @Value("\${gcs.bucket.input}") private val inputBucket: String,
-    @Value("\${gcs.bucket.output}") private val outputBucket: String
+    @Value("\${gcs.bucket.input}") private val inputBucket: String
 ) {
     private val logger = LoggerFactory.getLogger(PubSubMessageHandler::class.java)
 
@@ -27,24 +26,26 @@ class PubSubMessageHandler(
 
         try {
             val attributes = acker?.pubsubMessage?.attributesMap ?: emptyMap()
-            val objectName = attributes["objectName"]
-                ?: throw IllegalArgumentException("Message missing 'objectName' attribute")
-            val bucketName = attributes["bucketName"] ?: inputBucket
-            val correlationId = attributes["correlationId"] ?: ""
+            val targetFileHandle = attributes["RutebankenTargetFileHandle"]
+                ?: throw IllegalArgumentException("Message missing 'RutebankenTargetFileHandle' attribute")
+            val correlationId = attributes["RutebankenCorrelationId"] ?: ""
+            val datasetReferential = attributes["EnturDatasetReferential"] ?: ""
 
-            logger.info("Received PubSub message: bucket=$bucketName, object=$objectName, correlationId=$correlationId")
+            logger.info("Received PubSub message: file=$targetFileHandle, correlationId=$correlationId, referential=$datasetReferential")
 
-            val addedCount = processWithRetry(bucketName, objectName)
+            val addedCount = processWithRetry(inputBucket, targetFileHandle)
 
-            logger.info("Processing complete. Added $addedCount ServiceLinks. Publishing to outbound topic.")
+            logger.info("Processing complete. Added $addedCount ServiceLinks. Publishing status.")
 
+            val outputPath = targetFileHandle
             pubSubTemplate.publish(
                 outboundTopic,
-                "processing complete",
+                "",
                 mapOf(
-                    "objectName" to objectName,
-                    "bucketName" to outputBucket,
-                    "correlationId" to correlationId,
+                    "RutebankenCorrelationId" to correlationId,
+                    "EnturDatasetReferential" to datasetReferential,
+                    "Status" to "SUCCESS",
+                    "LinkedNetexFilePath" to outputPath,
                     "addedServiceLinksCount" to addedCount.toString()
                 )
             )

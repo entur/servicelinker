@@ -114,10 +114,10 @@
                             <VehicleModes>rail</VehicleModes>
                         </ScheduledStopPoint>
                         <ScheduledStopPoint id="FIN:ScheduledStopPoint:3" version="1">
-                            <Name>Drammen Station</Name>
+                            <Name>Jessheim Station</Name>
                             <Location>
-                                <Longitude>10.2044</Longitude>
-                                <Latitude>59.7434</Latitude>
+                                <Longitude>11.1740</Longitude>
+                                <Latitude>60.1450</Latitude>
                             </Location>
                             <VehicleModes>rail</VehicleModes>
                         </ScheduledStopPoint>
@@ -144,7 +144,7 @@
 
                     <journeyPatterns>
                         <JourneyPattern id="FIN:JourneyPattern:1" version="1">
-                            <Name>Oslo - Lillestrøm - Drammen Pattern</Name>
+                            <Name>Oslo - Lillestrøm - Jessheim Pattern</Name>
                             <RouteRef ref="FIN:Route:1" version="1"/>
                             <pointsInSequence>
                                 <StopPointInJourneyPattern id="FIN:StopPointInJourneyPattern:1" version="1" order="1">

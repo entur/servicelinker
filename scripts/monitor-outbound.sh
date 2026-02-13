@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Polls the servicelinker-outbound PubSub subscription on the local emulator
+# Polls the ServicelinkerStatusQueue PubSub subscription on the local emulator
 # and prints any messages that arrive. Acknowledges messages after printing.
 #
 # Usage: ./scripts/monitor-outbound.sh
 
 EMULATOR_HOST="${PUBSUB_EMULATOR_HOST:-localhost:8085}"
 PROJECT="local-project"
-SUBSCRIPTION="servicelinker-outbound-sub"
+SUBSCRIPTION="ServicelinkerStatusQueue-sub"
 POLL_INTERVAL=2
 
 echo "Monitoring subscription $SUBSCRIPTION on $EMULATOR_HOST (poll every ${POLL_INTERVAL}s)..."
@@ -20,7 +20,7 @@ while true; do
     -d '{"maxMessages": 10}')
 
   if echo "$RESPONSE" | grep -q "receivedMessages"; then
-    echo "=== $(date '+%H:%M:%S') Outbound message received ==="
+    echo "=== $(date '+%H:%M:%S') Status message received ==="
     echo "$RESPONSE" | python3 -m json.tool
 
     ACK_IDS=$(echo "$RESPONSE" | python3 -c "

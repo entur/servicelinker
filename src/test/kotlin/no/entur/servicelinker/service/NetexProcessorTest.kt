@@ -118,12 +118,12 @@ class NetexProcessorTest {
 
     @Test
     fun `should filter out unreasonably long routes`() = runTest {
-        mockOsrmWithRoute(osloToBergenCoords, 75000.0, 3600.0) // 75km - should be filtered out
+        mockOsrmWithRoute(osloToBergenCoords, 150000.0, 7200.0) // 150km - should be filtered out
 
         val inputStream = getSampleNetexInputStream()
         val (_, addedCount) = netexProcessor.processNetexFile(inputStream)
 
-        assertEquals(0, addedCount, "Should not add service links for routes over 50km")
+        assertEquals(0, addedCount, "Should not add service links for routes over 100km")
     }
 
     @Test
@@ -240,8 +240,8 @@ class NetexProcessorTest {
 
     @Test
     fun `should skip linksInSequence entry when route exceeds max distance`() = runTest {
-        // Existing link 1→2 stays. New pair 2→3 gets a 75km route → filtered out.
-        mockOsrmWithRoute(osloToBergenCoords, 75000.0, 3600.0)
+        // Existing link 1→2 stays. New pair 2→3 gets a 150km route → filtered out.
+        mockOsrmWithRoute(osloToBergenCoords, 150000.0, 7200.0)
 
         val inputStream = getSampleNetexInputStream()
         val (processedXml, addedCount) = netexProcessor.processNetexFile(inputStream)

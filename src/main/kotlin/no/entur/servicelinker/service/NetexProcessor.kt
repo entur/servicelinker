@@ -66,7 +66,7 @@ class NetexProcessor(
         for ((pairKey, pair) in neededPairs) {
             val route = try {
                 osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
                 null
             }
@@ -206,7 +206,7 @@ class NetexProcessor(
             val orderedRefs = mutableListOf<OrderedRef>()
             for (j in 0 until stopPointsInSequence.length) {
                 val spijp = stopPointsInSequence.item(j) as Element
-                val order = spijp.getAttribute("order")?.toIntOrNull() ?: (j + 1)
+                val order = spijp.getAttribute("order").toIntOrNull() ?: (j + 1)
                 val refElement = spijp.getElementsByTagName("ScheduledStopPointRef").item(0) as? Element
                 val ref = refElement?.getAttribute("ref")
                 if (ref != null) {
@@ -389,6 +389,6 @@ class NetexProcessor(
 
     companion object {
         const val SRS_NAME_WGS84: String = "EPSG:4326"
-        const val MAX_DISTANCE_METERS = 50000
+        const val MAX_DISTANCE_METERS = 100000
     }
 }

@@ -8,7 +8,7 @@ services:
     ports:
       - "8085:8085"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8085"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8085'"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -34,12 +34,12 @@ services:
       fake-gcs:
         condition: service_healthy
     entrypoint: ["bash", "-c",
-                 "curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/servicelinker-inbound && \
-                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/servicelinker-outbound && \
-                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/servicelinker-inbound-sub \
-                       -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/servicelinker-inbound\"}' && \
-                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/servicelinker-outbound-sub \
-                       -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/servicelinker-outbound\"}' && \
+                 "curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/ServicelinkerInboundQueue && \
+                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/ServicelinkerStatusQueue && \
+                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/ServicelinkerInboundQueue-sub \
+                       -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/ServicelinkerInboundQueue\"}' && \
+                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/ServicelinkerStatusQueue-sub \
+                       -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/ServicelinkerStatusQueue\"}' && \
                   curl -s -X POST http://fake-gcs:4443/storage/v1/b -H 'Content-Type: application/json' -d '{\"name\":\"marduk-exchange\"}' && \
                   curl -s -X POST http://fake-gcs:4443/storage/v1/b -H 'Content-Type: application/json' -d '{\"name\":\"servicelinker-exchange\"}' && \
                   echo '' && echo 'PubSub topics, subscriptions, and GCS buckets created.'"]

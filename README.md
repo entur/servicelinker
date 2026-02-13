@@ -1,11 +1,12 @@
 # ServiceLink Producer
 
-A Spring Boot application that reads Nordic Profile NeTEx files and adds missing ServiceLinks based on coordinate pairs and transport mode using OSRM routing. Part of the marduk pipeline, positioned after ashur and before post-validation.
+A Spring Boot application that reads Nordic Profile NeTEx files and adds missing ServiceLinks based on coordinate pairs and transport mode using OSRM routing. Part of the marduk pipeline, positioned after antu pre-validation and before ashur filtering.
 
 ## Features
 
 - Reads NeTEx datasets (ZIP archives or single XML files) from Google Cloud Storage
-- Identifies missing ServiceLinks between stop points
+- Identifies missing ServiceLinks for consecutive stops within JourneyPatterns
+- Adds ServiceLinkInJourneyPattern references (linksInSequence) to each JourneyPattern
 - Uses transport mode-specific OSRM instances for accurate routing (bus, rail, ferry, water)
 - Adds ServiceLinks with route geometry (GML LineString) and distances
 - Preserves existing ServiceLinks (no overwrites)
@@ -44,8 +45,8 @@ All configuration is via environment variables. Key settings:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GCP_PROJECT_ID` | `entur-project` | GCP project ID |
-| `PUBSUB_INBOUND_SUBSCRIPTION` | `servicelinker-inbound-sub` | PubSub subscription to listen on |
-| `PUBSUB_OUTBOUND_TOPIC` | `servicelinker-outbound` | PubSub topic for completion messages |
+| `PUBSUB_INBOUND_SUBSCRIPTION` | `ServicelinkerInboundQueue-sub` | PubSub subscription to listen on |
+| `PUBSUB_OUTBOUND_TOPIC` | `ServicelinkerStatusQueue` | PubSub topic for status messages |
 | `GCS_INPUT_BUCKET` | `marduk-exchange` | Input bucket |
 | `GCS_OUTPUT_BUCKET` | `servicelinker-exchange` | Output bucket |
 | `OSRM_URL_BUS` | `https://router.project-osrm.org` | OSRM instance for BUS/COACH |

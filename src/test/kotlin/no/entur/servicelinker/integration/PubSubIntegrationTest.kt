@@ -28,10 +28,10 @@ class PubSubIntegrationTest {
 
     companion object {
         private const val PROJECT_ID = "test-project"
-        private const val INBOUND_TOPIC = "servicelinker-inbound"
-        private const val OUTBOUND_TOPIC = "servicelinker-outbound"
-        private const val INBOUND_SUB = "servicelinker-inbound-sub"
-        private const val OUTBOUND_SUB = "servicelinker-outbound-sub"
+        private const val INBOUND_TOPIC = "ServicelinkerInboundQueue"
+        private const val OUTBOUND_TOPIC = "ServicelinkerStatusQueue"
+        private const val INBOUND_SUB = "ServicelinkerInboundQueue-sub"
+        private const val OUTBOUND_SUB = "ServicelinkerStatusQueue-sub"
 
         @Container
         @JvmStatic
@@ -101,9 +101,9 @@ class PubSubIntegrationTest {
 
         val message = PubsubMessage.newBuilder()
             .setData(ByteString.copyFromUtf8("test"))
-            .putAttributes("objectName", "test-file.xml")
-            .putAttributes("bucketName", "test-input")
-            .putAttributes("correlationId", "test-correlation-123")
+            .putAttributes("RutebankenTargetFileHandle", "test-file.xml")
+            .putAttributes("RutebankenCorrelationId", "test-correlation-123")
+            .putAttributes("EnturDatasetReferential", "rb_test")
             .build()
 
         val messageId = publisher.publish(message).get(5, TimeUnit.SECONDS)

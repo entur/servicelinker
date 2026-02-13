@@ -2,9 +2,9 @@
 
 ## Overview
 
-Servicelinker enriches Nordic profile NeTEx files with ServiceLink elements (route geometries and distances) using OSRM routing. It sits in the marduk pipeline after ashur (NeTEx filtering/normalization) and before post-validation.
+Servicelinker enriches Nordic profile NeTEx files with ServiceLink elements (route geometries and distances) using OSRM routing. It sits in the marduk pipeline after antu pre-validation and before ashur filtering. This means servicelinker processes the validated but unfiltered NeTEx data, adding ServiceLinks before ashur applies its filtering.
 
-**Pipeline flow:** marduk -> ashur -> **servicelinker** -> post-validation
+**Pipeline flow (orchestrated by marduk):** antu pre-validation → **servicelinker** → ashur filtering → antu post-validation
 
 Input and output are NeTEx datasets (ZIP archives or single XML files) stored in GCS buckets. Pipeline orchestration happens via PubSub messages.
 
@@ -55,10 +55,10 @@ The docker-compose setup includes an init container that creates PubSub topics/s
 
 | Resource | Name |
 |----------|------|
-| Inbound topic | `servicelinker-inbound` |
-| Outbound topic | `servicelinker-outbound` |
-| Inbound subscription | `servicelinker-inbound-sub` |
-| Outbound subscription | `servicelinker-outbound-sub` |
+| Inbound topic | `ServicelinkerInboundQueue` |
+| Status topic | `ServicelinkerStatusQueue` |
+| Inbound subscription | `ServicelinkerInboundQueue-sub` |
+| Status subscription | `ServicelinkerStatusQueue-sub` |
 | Input bucket | `marduk-exchange` |
 | Output bucket | `servicelinker-exchange` |
 
@@ -113,14 +113,14 @@ This triggers servicelinker to download the file from GCS, process it, upload th
 
 ```bash
 curl -s -X POST \
-  "http://localhost:8085/v1/projects/local-project/topics/servicelinker-inbound:publish" \
+  "http://localhost:8085/v1/projects/local-project/topics/ServicelinkerInboundQueue:publish" \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [{
       "attributes": {
-        "objectName": "test/sample-netex.xml",
-        "bucketName": "marduk-exchange",
-        "correlationId": "manual-test-001"
+        "RutebankenTargetFileHandle": "test/sample-netex.xml",
+        "RutebankenCorrelationId": "manual-test-001",
+        "EnturDatasetReferential": "rb_test"
       },
       "data": ""
     }]
@@ -132,9 +132,9 @@ curl -s -X POST \
 In the docker-compose terminal you should see log lines like:
 
 ```
-Received PubSub message: bucket=marduk-exchange, object=test/sample-netex.xml, correlationId=manual-test-001
+Received PubSub message: file=test/sample-netex.xml, correlationId=manual-test-001, referential=rb_test
 Processing dataset: gs://marduk-exchange/test/sample-netex.xml
-Processing complete. Added N ServiceLinks. Publishing to outbound topic.
+Processing complete. Added N ServiceLinks. Publishing status.
 Message acknowledged for correlationId=manual-test-001
 ```
 
@@ -159,22 +159,23 @@ Verify ServiceLinks were added:
 grep -c "ServiceLink" processed.xml
 ```
 
-**Step 6: Check the outbound PubSub message.**
+**Step 6: Check the status PubSub message.**
 
-The monitoring script from step 1 should have printed the completion message with these attributes:
+The monitoring script from step 1 should have printed the status message with these attributes:
 
 | Attribute | Expected value |
 |-----------|----------------|
-| `objectName` | `test/sample-netex.xml` |
-| `bucketName` | `servicelinker-exchange` |
-| `correlationId` | `manual-test-001` |
+| `RutebankenCorrelationId` | `manual-test-001` |
+| `EnturDatasetReferential` | `rb_test` |
+| `Status` | `SUCCESS` |
+| `LinkedNetexFilePath` | `test/sample-netex.xml` |
 | `addedServiceLinksCount` | Number of ServiceLinks added |
 
 If you didn't start the monitoring script, you can pull manually:
 
 ```bash
 curl -s -X POST \
-  "http://localhost:8085/v1/projects/local-project/subscriptions/servicelinker-outbound-sub:pull" \
+  "http://localhost:8085/v1/projects/local-project/subscriptions/ServicelinkerStatusQueue-sub:pull" \
   -H "Content-Type: application/json" \
   -d '{"maxMessages": 10}' | python3 -m json.tool
 ```
@@ -211,16 +212,16 @@ Configuration uses Spring profiles activated by the `COMMON_ENV` environment var
 | `COMMON_ENV` | Profile file | GCP project | OSRM | Logging |
 |--------------|-------------|-------------|------|---------|
 | (unset) | `application.properties` | `local-project` | Public OSRM | DEBUG |
-| `dev` | `application-dev.properties` | `ent-servicelinker-dev` | Internal OSRM | DEBUG |
-| `tst` | `application-tst.properties` | `ent-servicelinker-tst` | Internal OSRM | DEBUG |
-| `prd` | `application-prd.properties` | `ent-servicelinker-prd` | Internal OSRM | INFO |
+| `dev` | `application-dev.properties` | `ent-servicelnk-dev` | Internal OSRM | DEBUG |
+| `tst` | `application-tst.properties` | `ent-servicelnk-tst` | Internal OSRM | DEBUG |
+| `prd` | `application-prd.properties` | `ent-servicelnk-prd` | Internal OSRM | INFO |
 
 ### Shared defaults (application.properties)
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `servicelinker.pubsub.inbound.subscription` | `servicelinker-inbound-sub` | PubSub subscription to listen on |
-| `servicelinker.pubsub.outbound.topic` | `servicelinker-outbound` | PubSub topic for completion messages |
+| `servicelinker.pubsub.inbound.subscription` | `ServicelinkerInboundQueue-sub` | PubSub subscription to listen on |
+| `servicelinker.pubsub.outbound.topic` | `ServicelinkerStatusQueue` | PubSub topic for status messages |
 | `gcs.bucket.input` | `marduk-exchange` | GCS bucket for input datasets |
 | `gcs.bucket.output` | `servicelinker-exchange` | GCS bucket for processed output |
 | `osrm.timeout` | `30000` | OSRM HTTP timeout in milliseconds |
@@ -251,67 +252,74 @@ For local development (docker-compose or running directly), these environment va
 
 ## PubSub Message Format
 
-### Inbound message (from marduk)
+### Inbound message (from marduk via `ServicelinkerInboundQueue`)
 
-The message body is ignored. All routing info is in **message attributes**:
+The message body is ignored. All routing info is in **message attributes** (Marduk conventions):
 
 | Attribute | Required | Description |
 |-----------|----------|-------------|
-| `objectName` | Yes | GCS object name (e.g. `inbound/netex/rb_nsb-20240115.zip`) |
-| `bucketName` | No | Override input bucket (defaults to `GCS_INPUT_BUCKET`) |
-| `correlationId` | No | Correlation ID for pipeline tracking |
+| `RutebankenTargetFileHandle` | Yes | Path to NeTEx ZIP in marduk-exchange bucket (e.g. `outbound/netex/rb_avi/rb_avi-aggregated-netex.zip`) |
+| `RutebankenCorrelationId` | No | UUID for end-to-end pipeline tracking |
+| `EnturDatasetReferential` | No | Dataset codespace (e.g. `rb_avi`) |
 
-### Outbound message (to marduk)
+### Status message (to marduk via `ServicelinkerStatusQueue`)
 
-Published to `PUBSUB_OUTBOUND_TOPIC` on success. Attributes:
+Published on completion. Attributes:
 
 | Attribute | Description |
 |-----------|-------------|
-| `objectName` | Same object name as input (written to output bucket at same path) |
-| `bucketName` | The output bucket name |
-| `correlationId` | Passed through from inbound message |
+| `RutebankenCorrelationId` | Passed through from inbound message |
+| `EnturDatasetReferential` | Passed through from inbound message |
+| `Status` | `SUCCESS` or `FAILED` |
+| `LinkedNetexFilePath` | Path to enriched file in servicelinker-exchange bucket |
 | `addedServiceLinksCount` | Number of ServiceLinks added |
 
-On failure the inbound message is nacked for redelivery (no outbound message is published).
+On failure the inbound message is acked (not redelivered) after max retries.
 
 ---
 
 ## Marduk Integration
 
-Servicelinker integrates into the marduk pipeline via PubSub. The changes needed on the marduk side (separate repo/PR):
+Servicelinker integrates into the marduk pipeline via PubSub, positioned between antu pre-validation and ashur filtering.
 
-1. **New Camel route step** between "ashur complete" and "post-validation"
-2. **Publish** to `servicelinker-inbound` topic with file reference after ashur completes
-3. **Subscribe** to `servicelinker-outbound` topic to continue the pipeline
-4. **IAM:** Grant servicelinker's service account read access to marduk's exchange bucket, and grant marduk's service account subscribe access to servicelinker's outbound topic
+In marduk, the insertion point is in `AntuNetexValidationStatusRouteBuilder.java`: the `direct:antuNetexValidationComplete` route currently flows directly to `direct:ashurNetexFilterAfterPreValidation`. Servicelinker is inserted between these two steps.
+
+The changes needed on the marduk side (separate repo/PR):
+
+1. **New Camel route step** between "antu pre-validation complete" and "ashur filtering trigger"
+2. **Publish** to `ServicelinkerInboundQueue` with file reference after pre-validation succeeds
+3. **Subscribe** to `ServicelinkerStatusQueue`, then continue to ashur filtering
+4. **IAM:** Grant servicelinker's service account read access to marduk's exchange bucket, and grant marduk's service account read access to servicelinker's exchange bucket
 5. **Nabu:** Register a new pipeline step for status tracking
 
 ### Data flow
 
 ```
-marduk                     servicelinker               marduk
-  |                            |                          |
-  |-- publish to               |                          |
-  |   servicelinker-inbound -->|                          |
-  |   (objectName, bucketName, |                          |
-  |    correlationId)          |                          |
-  |                            |-- download from          |
-  |                            |   GCS input bucket       |
-  |                            |                          |
-  |                            |-- process NeTEx          |
-  |                            |   (add ServiceLinks)     |
-  |                            |                          |
-  |                            |-- upload to              |
-  |                            |   GCS output bucket      |
-  |                            |                          |
-  |                            |-- publish to             |
-  |                            |   servicelinker-outbound-|->
-  |                            |   (objectName, bucketName,  |
-  |                            |    correlationId)           |
-  |                                                       |
-  |                                                       |
-  |<-- subscribe to servicelinker-outbound ---------------|
-  |    continue pipeline                                  |
+marduk                        servicelinker               marduk
+  |                                |                          |
+  | (antu pre-validation OK)       |                          |
+  |                                |                          |
+  |-- publish to                   |                          |
+  |   ServicelinkerInboundQueue -->|                          |
+  |   (RutebankenTargetFileHandle, |                          |
+  |    RutebankenCorrelationId,    |                          |
+  |    EnturDatasetReferential)    |                          |
+  |                                |-- download from          |
+  |                                |   marduk-exchange bucket |
+  |                                |                          |
+  |                                |-- process NeTEx          |
+  |                                |   (add ServiceLinks)     |
+  |                                |                          |
+  |                                |-- upload to              |
+  |                                |   servicelinker-exchange |
+  |                                |                          |
+  |                                |-- publish to             |
+  |                                |   ServicelinkerStatusQ --|->
+  |                                |   (Status=SUCCESS,          |
+  |                                |    LinkedNetexFilePath)     |
+  |                                                           |
+  |<-- subscribe to ServicelinkerStatusQueue -----------------|
+  |    copy result, trigger ashur filtering                   |
 ```
 
 ---
@@ -419,9 +427,9 @@ kubectl logs -l app=servicelinker -n servicelinker --tail=0 -f
 ```
 
 ```bash
-# Terminal 2: poll the outbound subscription for the completion message
-gcloud pubsub subscriptions pull servicelinker-outbound-sub \
-  --project=YOUR_DEV_PROJECT \
+# Terminal 2: poll the status subscription for the completion message
+gcloud pubsub subscriptions pull ServicelinkerStatusQueue-sub \
+  --project=ent-servicelnk-dev \
   --auto-ack --limit=1 --wait
 ```
 
@@ -443,11 +451,11 @@ gsutil ls -l gs://marduk-exchange/test/sample-netex.xml
 **Step 3: Publish a message to the inbound topic.**
 
 ```bash
-gcloud pubsub topics publish servicelinker-inbound \
+gcloud pubsub topics publish ServicelinkerInboundQueue \
   --project=ent-servicelnk-dev \
-  --attribute=objectName=test/sample-netex.xml \
-  --attribute=bucketName=marduk-exchange \
-  --attribute=correlationId=manual-dev-test-001 \
+  --attribute=RutebankenTargetFileHandle=test/sample-netex.xml \
+  --attribute=RutebankenCorrelationId=manual-dev-test-001 \
+  --attribute=EnturDatasetReferential=rb_test \
   --message=""
 ```
 
@@ -456,13 +464,13 @@ gcloud pubsub topics publish servicelinker-inbound \
 You should see:
 
 ```
-Received PubSub message: bucket=marduk-exchange, object=test/sample-netex.xml, correlationId=manual-dev-test-001
+Received PubSub message: file=test/sample-netex.xml, correlationId=manual-dev-test-001, referential=rb_test
 Processing dataset: gs://marduk-exchange/test/sample-netex.xml
-Processing complete. Added N ServiceLinks. Publishing to outbound topic.
+Processing complete. Added N ServiceLinks. Publishing status.
 Message acknowledged for correlationId=manual-dev-test-001
 ```
 
-If processing fails, the message will be nacked and redelivered. Check logs for error details.
+If processing fails, the message is acked after max retries. Check logs for error details.
 
 **Step 5: Verify the processed output in GCS.**
 
@@ -479,15 +487,16 @@ gsutil cp gs://servicelinker-exchange/test/sample-netex.xml processed.xml
 grep -c "ServiceLink" processed.xml
 ```
 
-**Step 6: Check the outbound PubSub message (terminal 2).**
+**Step 6: Check the status PubSub message (terminal 2).**
 
-The `gcloud pubsub subscriptions pull` command should show the completion message with these attributes:
+The `gcloud pubsub subscriptions pull` command should show the status message with these attributes:
 
 | Attribute | Expected value |
 |-----------|----------------|
-| `objectName` | `test/sample-netex.xml` |
-| `bucketName` | `servicelinker-exchange` |
-| `correlationId` | `manual-dev-test-001` |
+| `RutebankenCorrelationId` | `manual-dev-test-001` |
+| `EnturDatasetReferential` | `rb_test` |
+| `Status` | `SUCCESS` |
+| `LinkedNetexFilePath` | `test/sample-netex.xml` |
 | `addedServiceLinksCount` | Number of ServiceLinks added |
 
 **Step 7: Clean up test data.**
@@ -516,7 +525,7 @@ gsutil rm gs://servicelinker-exchange/test/sample-netex.xml
 
 **App fails to start with PubSub errors:** If `PUBSUB_EMULATOR_HOST` is not set and no real GCP credentials are available, the PubSub client will fail to connect. For local dev, either use docker-compose (sets the emulator host) or set `PUBSUB_EMULATOR_HOST=localhost:8085` with the emulator running.
 
-**OSRM returns null routes:** Check that the OSRM instance for the transport mode is reachable and has loaded the correct network data. A `null` route means either the OSRM instance is down, timed out, or the coordinates are outside its loaded area. Routes over 50km are also filtered out.
+**OSRM returns null routes:** Check that the OSRM instance for the transport mode is reachable and has loaded the correct network data. A `null` route means either the OSRM instance is down, timed out, or the coordinates are outside its loaded area. Routes over 100km are also filtered out.
 
 **ZIP processing produces empty output:** Ensure the input ZIP contains `.xml` files (case-insensitive). Non-XML files are passed through unchanged. Empty ZIPs produce empty output ZIPs.
 
