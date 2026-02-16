@@ -1,0 +1,7 @@
+servicelinker_project = "ent-servicelnk-prd"
+pubsub_topic_project = "ent-marduk-prd"
+gcs_bucket_project = "ent-servicelnk-prd"
+bucket_instance_suffix = "prd"
+service_account = "serviceAccount:application@ent-servicelnk-prd.iam.gserviceaccount.com"
+marduk_service_account = "serviceAccount:application@ent-marduk-prd.iam.gserviceaccount.com"
+servicelinker_exchange_storage_bucket = "ror-servicelinker-exchange-gcp-prd"

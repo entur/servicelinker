@@ -1,0 +1,7 @@
+servicelinker_project = "ent-servicelnk-dev"
+pubsub_topic_project = "ent-marduk-dev"
+gcs_bucket_project = "ent-servicelnk-dev"
+bucket_instance_suffix = "dev"
+service_account = "serviceAccount:application@ent-servicelnk-dev.iam.gserviceaccount.com"
+marduk_service_account = "serviceAccount:application@ent-marduk-dev.iam.gserviceaccount.com"
+servicelinker_exchange_storage_bucket = "ror-servicelinker-exchange-gcp-dev"

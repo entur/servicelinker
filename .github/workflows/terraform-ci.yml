@@ -1,0 +1,31 @@
+name: Terraform CI
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+
+jobs:
+  terraform-lint:
+    uses: entur/gha-terraform/.github/workflows/lint.yml@v2
+
+  tf-plan-dev:
+    needs: terraform-lint
+    name: Terraform Plan DEV
+    uses: entur/gha-terraform/.github/workflows/plan.yml@v2
+    with:
+      environment: kub-ent-dev
+
+#  tf-plan-tst:
+#    needs: terraform-lint
+#    name: Terraform Plan TST
+#    uses: entur/gha-terraform/.github/workflows/plan.yml@v2
+#    with:
+#      environment: kub-ent-tst
+#
+#  tf-plan-prd:
+#    needs: terraform-lint
+#    name: Terraform Plan PRD
+#    uses: entur/gha-terraform/.github/workflows/plan.yml@v2
+#    with:
+#      environment: kub-ent-prd
