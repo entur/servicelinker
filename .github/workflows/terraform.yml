@@ -1,8 +1,11 @@
-name: Terraform CD
+name: Terraform
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'terraform/**'
+  pull_request:
     paths:
       - 'terraform/**'
 
@@ -15,44 +18,45 @@ jobs:
     name: Terraform Plan DEV
     uses: entur/gha-terraform/.github/workflows/plan.yml@v2
     with:
-      environment: kub-ent-dev
+      environment: dev
 
   tf-apply-dev:
+    if: github.event_name == 'push'
     needs: [tf-plan-dev]
     name: Terraform Apply DEV
     uses: entur/gha-terraform/.github/workflows/apply.yml@v2
     with:
-      environment: kub-ent-dev
+      environment: dev
       has_changes: ${{ needs.tf-plan-dev.outputs.has_changes }}
 
 #  tf-plan-tst:
 #    needs: [tf-apply-dev]
-#    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') }}
+#    if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') }}
 #    name: Terraform Plan TST
 #    uses: entur/gha-terraform/.github/workflows/plan.yml@v2
 #    with:
-#      environment: kub-ent-tst
+#      environment: tst
 #
 #  tf-apply-tst:
 #    needs: [tf-plan-tst]
 #    name: Terraform Apply TST
 #    uses: entur/gha-terraform/.github/workflows/apply.yml@v2
 #    with:
-#      environment: kub-ent-tst
+#      environment: tst
 #      has_changes: ${{ needs.tf-plan-tst.outputs.has_changes }}
 #
 #  tf-plan-prd:
 #    needs: [tf-apply-tst]
-#    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') }}
+#    if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') }}
 #    name: Terraform Plan PRD
 #    uses: entur/gha-terraform/.github/workflows/plan.yml@v2
 #    with:
-#      environment: kub-ent-prd
+#      environment: prd
 #
 #  tf-apply-prd:
 #    needs: [tf-plan-prd]
 #    name: Terraform Apply PRD
 #    uses: entur/gha-terraform/.github/workflows/apply.yml@v2
 #    with:
-#      environment: kub-ent-prd
+#      environment: prd
 #      has_changes: ${{ needs.tf-plan-prd.outputs.has_changes }}
