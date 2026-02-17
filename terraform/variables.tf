@@ -15,7 +15,7 @@ variable "service_account" {
 }
 
 variable "servicelinker_exchange_storage_bucket" {
-  description = "The name of the Servicelinker exchange bucket in GCP"
+  description = "The name of the Servicelinker exchange bucket in GCP."
 }
 
 variable "marduk_service_account" {
