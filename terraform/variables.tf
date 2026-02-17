@@ -14,10 +14,6 @@ variable "service_account" {
   description = "Service account for Servicelinker to use for IAM roles."
 }
 
-variable "servicelinker_exchange_storage_bucket" {
-  description = "The name of the Servicelinker exchange bucket in GCP."
-}
-
 variable "marduk_service_account" {
   description = "The service account of the marduk application"
 }
