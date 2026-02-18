@@ -2,11 +2,14 @@
 
 ## Overview
 
-Servicelinker enriches Nordic profile NeTEx files with ServiceLink elements (route geometries and distances) using OSRM routing. It sits in the marduk pipeline after antu pre-validation and before ashur filtering. This means servicelinker processes the validated but unfiltered NeTEx data, adding ServiceLinks before ashur applies its filtering.
+Servicelinker enriches Nordic profile NeTEx files with ServiceLink elements (route geometries and distances) using OSRM routing. It sits
+in the marduk pipeline after antu pre-validation and before ashur filtering. This means servicelinker processes the validated but
+unfiltered NeTEx data, adding ServiceLinks before ashur applies its filtering.
 
 **Pipeline flow (orchestrated by marduk):** antu pre-validation → **servicelinker** → ashur filtering → antu post-validation
 
-Input and output are NeTEx datasets (ZIP archives or single XML files) stored in GCS buckets. Pipeline orchestration happens via PubSub messages.
+Input and output are NeTEx datasets (ZIP archives or single XML files) stored in GCS buckets. Pipeline orchestration happens via PubSub
+messages.
 
 ---
 
@@ -205,7 +208,8 @@ curl http://localhost:8080/actuator/health
 
 ## Configuration
 
-Configuration uses Spring profiles activated by the `COMMON_ENV` environment variable set by k8s. When `COMMON_ENV` is not set (local development), no profile is active and the defaults in `application.properties` apply.
+Configuration uses Spring profiles activated by the `COMMON_ENV` environment variable set by k8s. When `COMMON_ENV` is not set (local
+development), no profile is active and the defaults in `application.properties` apply.
 
 ### Profiles
 
@@ -229,7 +233,8 @@ Configuration uses Spring profiles activated by the `COMMON_ENV` environment var
 
 ### OSRM per-mode routing
 
-Separate OSRM instances per transport mode. Each instance has its own network data but all expose the `/route/v1/driving/` endpoint. The base defaults (public OSRM) are overridden per environment profile with internal service URLs.
+Separate OSRM instances per transport mode. Each instance has its own network data but all expose the `/route/v1/driving/` endpoint. The
+base defaults (public OSRM) are overridden per environment profile with internal service URLs.
 
 | Property | Transport modes |
 |----------|-----------------|
@@ -282,14 +287,16 @@ On failure the inbound message is acked (not redelivered) after max retries.
 
 Servicelinker integrates into the marduk pipeline via PubSub, positioned between antu pre-validation and ashur filtering.
 
-In marduk, the insertion point is in `AntuNetexValidationStatusRouteBuilder.java`: the `direct:antuNetexValidationComplete` route currently flows directly to `direct:ashurNetexFilterAfterPreValidation`. Servicelinker is inserted between these two steps.
+In marduk, the insertion point is in `AntuNetexValidationStatusRouteBuilder.java`: the `direct:antuNetexValidationComplete` route currently
+flows directly to `direct:ashurNetexFilterAfterPreValidation`. Servicelinker is inserted between these two steps.
 
 The changes needed on the marduk side (separate repo/PR):
 
 1. **New Camel route step** between "antu pre-validation complete" and "ashur filtering trigger"
 2. **Publish** to `ServicelinkerInboundQueue` with file reference after pre-validation succeeds
 3. **Subscribe** to `ServicelinkerStatusQueue`, then continue to ashur filtering
-4. **IAM:** Grant servicelinker's service account read access to marduk's exchange bucket, and grant marduk's service account read access to servicelinker's exchange bucket
+4. **IAM:** Grant servicelinker's service account read access to marduk's exchange bucket, and grant marduk's service account read access 
+   to servicelinker's exchange bucket
 5. **Nabu:** Register a new pipeline step for status tracking
 
 ### Data flow
@@ -341,7 +348,7 @@ docker build -t servicelinker .
 
 ### CI/CD
 
-Pushes to `main` trigger the GitHub Actions workflow (`.github/workflows/build.yml`):
+**Application** — Pushes to `main` trigger `.github/workflows/build.yml`:
 
 1. **gradle-build** — builds and tests with `./gradlew build`, uploads JAR artifact
 2. **docker-build** — builds Docker image via `entur/gha-docker`
@@ -351,13 +358,29 @@ Pushes to `main` trigger the GitHub Actions workflow (`.github/workflows/build.y
 
 Environment-specific config is handled by Spring profiles activated via `COMMON_ENV` (set in the Helm chart values per environment).
 
+**Terraform** — Changes to `terraform/**` trigger `.github/workflows/terraform.yml` via `entur/gha-terraform@v2`:
+
+- **On PRs:** lint (fmt, tflint, validate) + plan for dev
+- **On push to main:** lint + plan + apply for dev
+
+Terraform state is stored in `gs://ent-gcs-tfa-servicelinker`. Per-environment config is in `terraform/env/{dev,tst,prd}.tfvars`.
+
 ### IAM setup
 
-The servicelinker service account needs:
-- `roles/pubsub.subscriber` on the inbound subscription
-- `roles/pubsub.publisher` on the outbound topic
-- `roles/storage.objectViewer` on the input bucket
-- `roles/storage.objectCreator` on the output bucket
+Managed via Terraform across two repos:
+
+**In Servicelinker's Terraform** (`terraform/iam.tf`):
+- Marduk SA gets `roles/storage.objectViewer` on the exchange bucket
+
+**In Marduk's Terraform** (`terraform/iam.tf`):
+- Servicelinker SA gets `roles/storage.objectViewer` on `marduk-exchange-*`
+- Servicelinker SA gets `roles/pubsub.publisher` on `ServicelinkerStatusQueue`
+
+**Workload identity** (not managed by app Terraform):
+- Servicelinker SA needs `roles/pubsub.subscriber` on the inbound subscription
+- Servicelinker SA needs `roles/pubsub.publisher` on the outbound topic
+- Servicelinker SA needs `roles/storage.objectViewer` on the input bucket
+- Servicelinker SA needs `roles/storage.objectCreator` on the output bucket
 
 ---
 
@@ -397,7 +420,8 @@ grep -c "ServiceLink" processed.xml
 
 ### Verifying OSRM connectivity
 
-Before running the full pipeline, verify that each OSRM instance is reachable from the servicelinker pod. Use a coordinate pair in Norway (Oslo area):
+Before running the full pipeline, verify that each OSRM instance is reachable from the servicelinker pod. Use a coordinate pair in
+Norway (Oslo area):
 
 ```bash
 kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
@@ -433,7 +457,8 @@ gcloud pubsub subscriptions pull ServicelinkerStatusQueue-sub \
   --auto-ack --limit=1 --wait
 ```
 
-The `--wait` flag blocks until a message arrives (up to a timeout). If your `gcloud` version doesn't support `--wait`, run the pull command after step 3 instead.
+The `--wait` flag blocks until a message arrives (up to a timeout). If your `gcloud` version doesn't support `--wait`, run the pull command
+after step 3 instead.
 
 **Step 2: Upload a test NeTEx file to the input bucket.**
 
@@ -523,10 +548,16 @@ gsutil rm gs://servicelinker-exchange/test/sample-netex.xml
 
 ## Troubleshooting
 
-**App fails to start with PubSub errors:** If `PUBSUB_EMULATOR_HOST` is not set and no real GCP credentials are available, the PubSub client will fail to connect. For local dev, either use docker-compose (sets the emulator host) or set `PUBSUB_EMULATOR_HOST=localhost:8085` with the emulator running.
+**App fails to start with PubSub errors:** If `PUBSUB_EMULATOR_HOST` is not set and no real GCP credentials are available, the PubSub
+client will fail to connect. For local dev, either use docker-compose (sets the emulator host) or set
+`PUBSUB_EMULATOR_HOST=localhost:8085` with the emulator running.
 
-**OSRM returns null routes:** Check that the OSRM instance for the transport mode is reachable and has loaded the correct network data. A `null` route means either the OSRM instance is down, timed out, or the coordinates are outside its loaded area. Routes over 100km are also filtered out.
+**OSRM returns null routes:** Check that the OSRM instance for the transport mode is reachable and has loaded the correct network data.
+A `null` route means either the OSRM instance is down, timed out, or the coordinates are outside its loaded area. Routes over 100km
+are also filtered out.
 
-**ZIP processing produces empty output:** Ensure the input ZIP contains `.xml` files (case-insensitive). Non-XML files are passed through unchanged. Empty ZIPs produce empty output ZIPs.
+**ZIP processing produces empty output:** Ensure the input ZIP contains `.xml` files (case-insensitive). Non-XML files are passed
+through unchanged. Empty ZIPs produce empty output ZIPs.
 
-**Messages not being processed:** Check that the inbound subscription name matches what the app is configured to listen on. Verify with `kubectl logs` that the `PubSubInboundChannelAdapter` started successfully. Look for the log line: `started bean 'inboundChannelAdapter'`.
+**Messages not being processed:** Check that the inbound subscription name matches what the app is configured to listen on. Verify with
+`kubectl logs` that the `PubSubInboundChannelAdapter` started successfully. Look for the log line: `started bean 'inboundChannelAdapter'`.

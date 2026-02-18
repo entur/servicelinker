@@ -1,14 +1,18 @@
 # Integrating Servicelinker into the Marduk Pipeline
 
-This document describes the Marduk pipeline and how Servicelinker fits in. It covers the full data flow, resource ownership, Terraform configuration, IAM permissions, and message contracts.
+This document describes the Marduk pipeline and how Servicelinker fits in. It covers the full data flow, resource ownership, Terraform
+configuration, IAM permissions, and message contracts.
 
 ## Pipeline Overview
 
-Marduk orchestrates NeTEx dataset processing. After Antu pre-validation succeeds, Marduk triggers Servicelinker to add ServiceLinks to the validated dataset. Servicelinker writes the enriched result to its exchange bucket and publishes a status message back to Marduk. Marduk then triggers Ashur to filter the enriched dataset. After Ashur completes, Marduk triggers Antu post-validation.
+Marduk orchestrates NeTEx dataset processing. After Antu pre-validation succeeds, Marduk triggers Servicelinker to add ServiceLinks to
+the validated dataset. Servicelinker writes the enriched result to its exchange bucket and publishes a status message back to Marduk.
+Marduk then triggers Ashur to filter the enriched dataset. After Ashur completes, Marduk triggers Antu post-validation.
 
 **Pipeline order:** Antu pre-validation → **Servicelinker** → Ashur filtering → Antu post-validation
 
-In marduk, the insertion point is `AntuNetexValidationStatusRouteBuilder.java`: the `direct:antuNetexValidationComplete` route currently flows directly to `direct:ashurNetexFilterAfterPreValidation`. Servicelinker is inserted between these two.
+In marduk, the insertion point is `AntuNetexValidationStatusRouteBuilder.java`: the `direct:antuNetexValidationComplete` route currently
+flows directly to `direct:ashurNetexFilterAfterPreValidation`. Servicelinker is inserted between these two.
 
 ```
 Marduk                    Servicelinker                   Ashur
@@ -153,7 +157,8 @@ Two buckets, both owned by Ashur:
 3. Copies it to Antu's validation bucket
 4. Triggers Antu post-validation
 
-This flow remains unchanged — Ashur filtering now runs on the ServiceLink-enriched dataset (produced by Servicelinker), but the post-Ashur flow stays the same.
+This flow remains unchanged — Ashur filtering now runs on the ServiceLink-enriched dataset (produced by Servicelinker), but the post-Ashur
+flow stays the same.
 
 ## Environment Matrix
 
@@ -163,6 +168,8 @@ This flow remains unchanged — Ashur filtering now runs on the ServiceLink-enri
 | **Servicelinker GCP project** | `ent-servicelnk-dev` | `ent-servicelnk-tst` | `ent-servicelnk-prd` |
 | **Ashur GCP project** | `ent-ashur-dev` | `ent-ashur-tst` | `ent-ashur-prd` |
 | **Marduk exchange bucket** | `marduk-exchange-dev` | `marduk-exchange-test` | `marduk-exchange-production` |
+| **Servicelinker internal bucket** | `ror-servicelinker-internal-gcp-dev` | `ror-servicelinker-internal-gcp-tst` | `ror-servicelinker-internal-gcp-prd` |
+| **Servicelinker exchange bucket** | `ror-servicelinker-exchange-gcp-dev` | `ror-servicelinker-exchange-gcp-tst` | `ror-servicelinker-exchange-gcp-prd` |
 | **Ashur internal bucket** | `ror-ashur-internal-gcp-dev` | `ror-ashur-internal-gcp-tst` | `ror-ashur-internal-gcp-prd` |
 | **Ashur exchange bucket** | `ror-ashur-exchange-gcp-dev` | `ror-ashur-exchange-gcp-tst` | `ror-ashur-exchange-gcp-prd` |
 | **Marduk SA** | `application@ent-marduk-dev.iam.gserviceaccount.com` | `application@ent-marduk-tst.iam.gserviceaccount.com` | `application@ent-marduk-prd.iam.gserviceaccount.com` |
@@ -171,60 +178,57 @@ This flow remains unchanged — Ashur filtering now runs on the ServiceLink-enri
 
 ## Service Accounts & IAM: How Cross-Project Access Works
 
-Each service runs in its own GCP project with its own service account (`application@ent-{service}-{env}.iam.gserviceaccount.com`). Cross-project access is granted by the resource owner's Terraform:
+Each service runs in its own GCP project with its own service account (`application@ent-{service}-{env}.iam.gserviceaccount.com`).
+Cross-project access is granted by the resource owner's Terraform:
 
 | Grant | Resource Owner Repo | Terraform File | Role |
 |---|---|---|---|
 | Ashur SA → read `marduk-exchange-*` | `entur/marduk` | `terraform/iam.tf` | `roles/storage.objectViewer` |
 | Ashur SA → publish to `FilterNetexFileStatusQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.publisher` |
 | Marduk SA → read `ror-ashur-exchange-gcp-*` | `entur/ashur` | `terraform/iam.tf` | `roles/storage.objectViewer` |
+| Servicelinker SA → read `marduk-exchange-*` | `entur/marduk` | `terraform/iam.tf` | `roles/storage.objectViewer` |
+| Servicelinker SA → publish to `ServicelinkerStatusQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.publisher` |
+| Marduk SA → read `ror-servicelinker-exchange-gcp-*` | `entur/servicelinker` | `terraform/iam.tf` | `roles/storage.objectViewer` |
 
-**Pattern:** The repo that *owns* the resource grants access to external service accounts. This is the pattern Servicelinker should follow.
+**Pattern:** The repo that *owns* the resource grants access to external service accounts.
 
-## Permissions Servicelinker Will Need
+## Terraform: What Has Been Created
 
-Based on the Ashur/Marduk pattern, Servicelinker will need:
+### Servicelinker's Terraform (`entur/servicelinker`, `terraform/`)
 
-### Servicelinker must be granted (by other repos' Terraform)
+| Resource | Type | File | Status |
+|---|---|---|---|
+| Internal GCS bucket (`ror-servicelinker-internal-gcp-{suffix}`) | `google_storage_bucket` | `storage.tf` | Done |
+| Exchange GCS bucket (`ror-servicelinker-exchange-gcp-{suffix}`) | `google_storage_bucket` | `storage.tf` | Done |
+| Marduk SA → read exchange bucket | `google_storage_bucket_iam_member` | `iam.tf` | Done |
+| Subscription to `ServicelinkerInboundQueue` | `google_pubsub_subscription` | `pubsub.tf` | Commented out (waiting for Marduk topics) |
+| Subscription to `ServicelinkerStatusQueue` | `google_pubsub_subscription` | `pubsub.tf` | Commented out (waiting for Marduk topics) |
 
-| Access | Granted by | What to add |
-|---|---|---|
-| Read `marduk-exchange-*` | `entur/marduk` `terraform/iam.tf` | `google_storage_bucket_iam_member` granting Servicelinker SA `roles/storage.objectViewer` on the exchange bucket |
-| Publish to `ServicelinkerStatusQueue` in Marduk | `entur/marduk` `terraform/iam.tf` | `google_pubsub_topic_iam_member` granting Servicelinker SA `roles/pubsub.publisher` on the status topic |
+### Marduk's Terraform (`entur/marduk`, `terraform/`)
 
-### Servicelinker must grant (in its own Terraform)
+| Resource | Type | File | Status |
+|---|---|---|---|
+| Topic `ServicelinkerInboundQueue` | `google_pubsub_topic` | `pubsub.tf` | Done (not yet applied) |
+| Topic `ServicelinkerStatusQueue` | `google_pubsub_topic` | `pubsub.tf` | Done (not yet applied) |
+| Servicelinker SA → read `marduk-exchange-*` | `google_storage_bucket_iam_member` | `iam.tf` | Done (not yet applied) |
+| Servicelinker SA → publish to `ServicelinkerStatusQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done (not yet applied) |
 
-| Access | To whom | What to add |
-|---|---|---|
-| Read Servicelinker's exchange bucket | Marduk SA | `google_storage_bucket_iam_member` granting Marduk SA `roles/storage.objectViewer` |
+### Deployment order
 
-### New resources Servicelinker needs to create (in its own Terraform)
+1. Apply Marduk's Terraform (creates topics and IAM grants)
+2. Uncomment subscriptions in Servicelinker's `pubsub.tf` and apply
 
-| Resource | Type | Notes |
-|---|---|---|
-| Internal GCS bucket | `google_storage_bucket` | For intermediate artifacts, following the `ror-servicelinker-internal-gcp-{suffix}` naming pattern |
-| Exchange GCS bucket | `google_storage_bucket` | For output consumed by Marduk, following `ror-servicelinker-exchange-gcp-{suffix}` |
-| Subscription to `ServicelinkerInboundQueue` | `google_pubsub_subscription` | Cross-project subscription in Servicelinker's project to the inbound topic in Marduk's project |
-
-### New resources to create in Marduk's Terraform
-
-| Resource | Type | Notes |
-|---|---|---|
-| Topic `ServicelinkerInboundQueue` | `google_pubsub_topic` | For Marduk to trigger Servicelinker after pre-validation |
-| Topic `ServicelinkerStatusQueue` | `google_pubsub_topic` | For Servicelinker to publish status back to Marduk |
-| IAM: Servicelinker SA → publisher on status topic | `google_pubsub_topic_iam_member` | `roles/pubsub.publisher` |
-| Subscription to `ServicelinkerStatusQueue` | `google_pubsub_subscription` | For Marduk to consume Servicelinker status messages |
-
-## Terraform Patterns to Follow
+## Terraform Patterns
 
 All three repos use the same conventions:
 
 - **State backend:** GCS bucket (`ent-gcs-tfa-{service}`)
-- **Provider:** `hashicorp/google`
-- **Per-environment config:** `terraform/env/kub-ent-{dev,tst,prd}.tfvars`
+- **Provider:** `hashicorp/google` `~> 6.49.0`
+- **Per-environment config:** `terraform/env/{dev,tst,prd}.tfvars` (servicelinker) or `terraform/env/kub-ent-{dev,tst,prd}.tfvars` (marduk, ashur)
 - **Labels:** `manager=terraform`, `team=ror`, `slack=talk-ror`, `app={service}`
 - **Bucket settings:** Uniform bucket-level access, public access prevention enforced, versioning off, logging enabled
 - **Pub/Sub subscriptions:** `message_retention_duration=3600s`, `ack_deadline_seconds=600`, no expiry (`ttl=""`), retry backoff 10s–600s
+- **CI/CD:** Servicelinker uses `entur/gha-terraform@v2` workflows (lint, plan, apply). Marduk and Ashur do not have Terraform CI/CD yet.
 
 ## Message Contract
 
@@ -252,12 +256,21 @@ Following the same pattern Ashur uses, Servicelinker publishes status messages w
 
 ## Key Source Files in Related Repos
 
+### entur/servicelinker
+
+| File | What it does |
+|---|---|
+| `terraform/storage.tf` | Creates internal + exchange buckets (`ror-servicelinker-{internal,exchange}-gcp-{suffix}`) |
+| `terraform/pubsub.tf` | Cross-project subscriptions to `ServicelinkerInboundQueue` and `ServicelinkerStatusQueue` (currently commented out) |
+| `terraform/iam.tf` | Grants Marduk SA read access to exchange bucket |
+| `.github/workflows/terraform.yml` | Terraform CI/CD via `entur/gha-terraform@v2` |
+
 ### entur/marduk
 
 | File | What it does |
 |---|---|
-| `terraform/pubsub.tf` | Creates Pub/Sub topics (`FilterNetexFileQueue`, `FilterNetexFileStatusQueue`). **New topics for Servicelinker go here.** |
-| `terraform/iam.tf` | Grants Ashur SA publish access to status topic + read access to exchange bucket. **Servicelinker SA grants go here.** |
+| `terraform/pubsub.tf` | Creates Pub/Sub topics including `ServicelinkerInboundQueue` and `ServicelinkerStatusQueue` |
+| `terraform/iam.tf` | Grants Ashur + Servicelinker SA access to exchange bucket and publish rights to status topics |
 | `src/.../AntuNetexValidationStatusRouteBuilder.java` | Routes from `direct:antuNetexValidationComplete` to `direct:ashurNetexFilterAfterPreValidation`. **This is the file that needs modification to insert Servicelinker** (publish to `ServicelinkerInboundQueue` instead of going directly to Ashur). |
 | `src/.../AshurFilteringStatusRouteBuilder.java` | Consumes from `FilterNetexFileStatusQueue`, copies result, triggers post-validation |
 | `src/.../Constants.java` | Defines all header/attribute constants |
