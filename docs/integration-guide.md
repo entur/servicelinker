@@ -218,6 +218,39 @@ Cross-project access is granted by the resource owner's Terraform:
 1. Apply Marduk's Terraform (creates topics and IAM grants)
 2. Uncomment subscriptions in Servicelinker's `pubsub.tf` and apply
 
+### Verifying Marduk's Terraform has been applied
+
+After step 1, verify that the topics and IAM grants exist. Replace `dev` / `tst` / `prd` as needed.
+
+**PubSub topics (should return topic details, not `NOT_FOUND`):**
+
+```bash
+gcloud pubsub topics describe ServicelinkerInboundQueue --project=ent-marduk-dev
+gcloud pubsub topics describe ServicelinkerStatusQueue  --project=ent-marduk-dev
+```
+
+**Servicelinker SA can read the exchange bucket:**
+
+```bash
+gcloud storage buckets get-iam-policy gs://marduk-exchange-dev \
+  --format='table(bindings.role,bindings.members)' \
+  | grep servicelnk
+```
+
+Expected: `application@ent-servicelnk-dev.iam.gserviceaccount.com` with `roles/storage.objectViewer`.
+
+**Servicelinker SA can publish to the status topic:**
+
+```bash
+gcloud pubsub topics get-iam-policy ServicelinkerStatusQueue --project=ent-marduk-dev \
+  --format='table(bindings.role,bindings.members)' \
+  | grep servicelnk
+```
+
+Expected: `application@ent-servicelnk-dev.iam.gserviceaccount.com` with `roles/pubsub.publisher`.
+
+Or check in the **GCP Console**: Pub/Sub > Topics in `ent-marduk-dev` for the two topics, and their Permissions tabs for the servicelinker SA grants.
+
 ## Terraform Patterns
 
 All three repos use the same conventions:
