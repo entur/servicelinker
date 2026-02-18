@@ -30,8 +30,8 @@ class PubSubIntegrationTest {
         private const val PROJECT_ID = "test-project"
         private const val INBOUND_TOPIC = "ServicelinkerInboundQueue"
         private const val OUTBOUND_TOPIC = "ServicelinkerStatusQueue"
-        private const val INBOUND_SUB = "ServicelinkerInboundQueue-sub"
-        private const val OUTBOUND_SUB = "ServicelinkerStatusQueue-sub"
+        private const val INBOUND_SUB = "ServicelinkerInboundQueue"
+        private const val OUTBOUND_SUB = "ServicelinkerStatusQueue"
 
         @Container
         @JvmStatic

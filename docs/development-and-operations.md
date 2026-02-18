@@ -60,8 +60,8 @@ The docker-compose setup includes an init container that creates PubSub topics/s
 |----------|------|
 | Inbound topic | `ServicelinkerInboundQueue` |
 | Status topic | `ServicelinkerStatusQueue` |
-| Inbound subscription | `ServicelinkerInboundQueue-sub` |
-| Status subscription | `ServicelinkerStatusQueue-sub` |
+| Inbound subscription | `ServicelinkerInboundQueue` |
+| Status subscription | `ServicelinkerStatusQueue` |
 | Input bucket | `marduk-exchange` |
 | Output bucket | `servicelinker-exchange` |
 
@@ -178,7 +178,7 @@ If you didn't start the monitoring script, you can pull manually:
 
 ```bash
 curl -s -X POST \
-  "http://localhost:8085/v1/projects/local-project/subscriptions/ServicelinkerStatusQueue-sub:pull" \
+  "http://localhost:8085/v1/projects/local-project/subscriptions/ServicelinkerStatusQueue:pull" \
   -H "Content-Type: application/json" \
   -d '{"maxMessages": 10}' | python3 -m json.tool
 ```
@@ -224,7 +224,7 @@ development), no profile is active and the defaults in `application.properties` 
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `servicelinker.pubsub.inbound.subscription` | `ServicelinkerInboundQueue-sub` | PubSub subscription to listen on |
+| `servicelinker.pubsub.inbound.subscription` | `ServicelinkerInboundQueue` | PubSub subscription to listen on |
 | `servicelinker.pubsub.outbound.topic` | `ServicelinkerStatusQueue` | PubSub topic for status messages |
 | `gcs.bucket.input` | `marduk-exchange` | GCS bucket for input datasets |
 | `gcs.bucket.output` | `servicelinker-exchange` | GCS bucket for processed output |
@@ -452,7 +452,7 @@ kubectl logs -l app=servicelinker -n servicelinker --tail=0 -f
 
 ```bash
 # Terminal 2: poll the status subscription for the completion message
-gcloud pubsub subscriptions pull ServicelinkerStatusQueue-sub \
+gcloud pubsub subscriptions pull ServicelinkerStatusQueue \
   --project=ent-servicelnk-dev \
   --auto-ack --limit=1 --wait
 ```

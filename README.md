@@ -45,7 +45,7 @@ All configuration is via environment variables. Key settings:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GCP_PROJECT_ID` | `entur-project` | GCP project ID |
-| `PUBSUB_INBOUND_SUBSCRIPTION` | `ServicelinkerInboundQueue-sub` | PubSub subscription to listen on |
+| `PUBSUB_INBOUND_SUBSCRIPTION` | `ServicelinkerInboundQueue` | PubSub subscription to listen on |
 | `PUBSUB_OUTBOUND_TOPIC` | `ServicelinkerStatusQueue` | PubSub topic for status messages |
 | `GCS_INPUT_BUCKET` | `marduk-exchange` | Input bucket |
 | `GCS_OUTPUT_BUCKET` | `servicelinker-exchange` | Output bucket |

@@ -36,9 +36,9 @@ services:
     entrypoint: ["bash", "-c",
                  "curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/ServicelinkerInboundQueue && \
                   curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/topics/ServicelinkerStatusQueue && \
-                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/ServicelinkerInboundQueue-sub \
+                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/ServicelinkerInboundQueue \
                        -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/ServicelinkerInboundQueue\"}' && \
-                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/ServicelinkerStatusQueue-sub \
+                  curl -s -X PUT http://pubsub-emulator:8085/v1/projects/local-project/subscriptions/ServicelinkerStatusQueue \
                        -H 'Content-Type: application/json' -d '{\"topic\":\"projects/local-project/topics/ServicelinkerStatusQueue\"}' && \
                   curl -s -X POST http://fake-gcs:4443/storage/v1/b -H 'Content-Type: application/json' -d '{\"name\":\"marduk-exchange\"}' && \
                   curl -s -X POST http://fake-gcs:4443/storage/v1/b -H 'Content-Type: application/json' -d '{\"name\":\"servicelinker-exchange\"}' && \

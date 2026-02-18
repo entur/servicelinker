@@ -6,7 +6,7 @@
 
 EMULATOR_HOST="${PUBSUB_EMULATOR_HOST:-localhost:8085}"
 PROJECT="local-project"
-SUBSCRIPTION="ServicelinkerStatusQueue-sub"
+SUBSCRIPTION="ServicelinkerStatusQueue"
 POLL_INTERVAL=2
 
 echo "Monitoring subscription $SUBSCRIPTION on $EMULATOR_HOST (poll every ${POLL_INTERVAL}s)..."

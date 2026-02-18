@@ -188,9 +188,13 @@ Cross-project access is granted by the resource owner's Terraform:
 | Marduk SA → read `ror-ashur-exchange-gcp-*` | `entur/ashur` | `terraform/iam.tf` | `roles/storage.objectViewer` |
 | Servicelinker SA → read `marduk-exchange-*` | `entur/marduk` | `terraform/iam.tf` | `roles/storage.objectViewer` |
 | Servicelinker SA → publish to `ServicelinkerStatusQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.publisher` |
+| Servicelinker SA → subscribe to `ServicelinkerInboundQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.subscriber` |
+| Servicelinker SA → subscribe to `ServicelinkerStatusQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.subscriber` |
 | Marduk SA → read `ror-servicelinker-exchange-gcp-*` | `entur/servicelinker` | `terraform/iam.tf` | `roles/storage.objectViewer` |
 
 **Pattern:** The repo that *owns* the resource grants access to external service accounts.
+
+**Note on cross-project subscriptions:** When Servicelinker's Terraform creates a subscription in `ent-servicelnk-*` that references a topic in `ent-marduk-*`, the creating SA needs `pubsub.topics.attachSubscription` on the topic. This permission is included in `roles/pubsub.subscriber`, which must be granted on each topic by the topic owner (Marduk).
 
 ## Terraform: What Has Been Created
 
@@ -201,22 +205,25 @@ Cross-project access is granted by the resource owner's Terraform:
 | Internal GCS bucket (`ror-servicelinker-internal-gcp-{suffix}`) | `google_storage_bucket` | `storage.tf` | Done |
 | Exchange GCS bucket (`ror-servicelinker-exchange-gcp-{suffix}`) | `google_storage_bucket` | `storage.tf` | Done |
 | Marduk SA → read exchange bucket | `google_storage_bucket_iam_member` | `iam.tf` | Done |
-| Subscription to `ServicelinkerInboundQueue` | `google_pubsub_subscription` | `pubsub.tf` | Commented out (waiting for Marduk topics) |
-| Subscription to `ServicelinkerStatusQueue` | `google_pubsub_subscription` | `pubsub.tf` | Commented out (waiting for Marduk topics) |
+| Subscription to `ServicelinkerInboundQueue` | `google_pubsub_subscription` | `pubsub.tf` | Commented out (waiting for Marduk subscriber grants) |
+| Subscription to `ServicelinkerStatusQueue` | `google_pubsub_subscription` | `pubsub.tf` | Commented out (waiting for Marduk subscriber grants) |
 
 ### Marduk's Terraform (`entur/marduk`, `terraform/`)
 
 | Resource | Type | File | Status |
 |---|---|---|---|
-| Topic `ServicelinkerInboundQueue` | `google_pubsub_topic` | `pubsub.tf` | Done (not yet applied) |
-| Topic `ServicelinkerStatusQueue` | `google_pubsub_topic` | `pubsub.tf` | Done (not yet applied) |
-| Servicelinker SA → read `marduk-exchange-*` | `google_storage_bucket_iam_member` | `iam.tf` | Done (not yet applied) |
-| Servicelinker SA → publish to `ServicelinkerStatusQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done (not yet applied) |
+| Topic `ServicelinkerInboundQueue` | `google_pubsub_topic` | `pubsub.tf` | Done |
+| Topic `ServicelinkerStatusQueue` | `google_pubsub_topic` | `pubsub.tf` | Done |
+| Servicelinker SA → read `marduk-exchange-*` | `google_storage_bucket_iam_member` | `iam.tf` | Done |
+| Servicelinker SA → publish to `ServicelinkerStatusQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done |
+| Servicelinker SA → subscribe to `ServicelinkerInboundQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done (not yet applied) |
+| Servicelinker SA → subscribe to `ServicelinkerStatusQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done (not yet applied) |
 
 ### Deployment order
 
-1. Apply Marduk's Terraform (creates topics and IAM grants)
+1. Apply Marduk's Terraform (creates topics, app IAM grants, and Terraform SA subscriber grants)
 2. Uncomment subscriptions in Servicelinker's `pubsub.tf` and apply
+3. Verify subscriptions were created (see below)
 
 ### Verifying Marduk's Terraform has been applied
 
