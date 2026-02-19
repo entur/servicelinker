@@ -295,8 +295,8 @@ The changes needed on the marduk side (separate repo/PR):
 1. **New Camel route step** between "antu pre-validation complete" and "ashur filtering trigger"
 2. **Publish** to `ServicelinkerInboundQueue` with file reference after pre-validation succeeds
 3. **Subscribe** to `ServicelinkerStatusQueue`, then continue to ashur filtering
-4. **IAM:** Grant servicelinker's service account read access to marduk's exchange bucket, and grant marduk's service account read access 
-   to servicelinker's exchange bucket
+4. ~~**IAM:** Grant servicelinker's service account read access to marduk's exchange bucket, and grant marduk's service account read access
+   to servicelinker's exchange bucket~~ (done — Terraform applied)
 5. **Nabu:** Register a new pipeline step for status tracking
 
 ### Data flow
@@ -375,6 +375,7 @@ Managed via Terraform across two repos:
 **In Marduk's Terraform** (`terraform/iam.tf`):
 - Servicelinker SA gets `roles/storage.objectViewer` on `marduk-exchange-*`
 - Servicelinker SA gets `roles/pubsub.publisher` on `ServicelinkerStatusQueue`
+- Servicelinker Terraform SA (`gh-servicelinker-5cdd-{env}@ent-github-shr.iam.gserviceaccount.com`) gets `roles/pubsub.subscriber` on `ServicelinkerInboundQueue` and `ServicelinkerStatusQueue` (needed for cross-project subscription creation)
 
 **Workload identity** (not managed by app Terraform):
 - Servicelinker SA needs `roles/pubsub.subscriber` on the inbound subscription
@@ -464,20 +465,20 @@ after step 3 instead.
 
 ```bash
 gsutil cp src/test/resources/sample-netex.xml \
-  gs://marduk-exchange/test/sample-netex.xml
+  gs://marduk-exchange-dev/test/sample-netex.xml
 ```
 
 Verify the upload:
 
 ```bash
-gsutil ls -l gs://marduk-exchange/test/sample-netex.xml
+gsutil ls -l gs://marduk-exchange-dev/test/sample-netex.xml
 ```
 
 **Step 3: Publish a message to the inbound topic.**
 
 ```bash
 gcloud pubsub topics publish ServicelinkerInboundQueue \
-  --project=ent-servicelnk-dev \
+  --project=ent-marduk-dev \
   --attribute=RutebankenTargetFileHandle=test/sample-netex.xml \
   --attribute=RutebankenCorrelationId=manual-dev-test-001 \
   --attribute=EnturDatasetReferential=rb_test \
@@ -490,7 +491,7 @@ You should see:
 
 ```
 Received PubSub message: file=test/sample-netex.xml, correlationId=manual-dev-test-001, referential=rb_test
-Processing dataset: gs://marduk-exchange/test/sample-netex.xml
+Processing dataset: gs://marduk-exchange-dev/test/sample-netex.xml
 Processing complete. Added N ServiceLinks. Publishing status.
 Message acknowledged for correlationId=manual-dev-test-001
 ```
@@ -502,13 +503,13 @@ If processing fails, the message is acked after max retries. Check logs for erro
 The output file is written to the output bucket at the same object path:
 
 ```bash
-gsutil ls -l gs://servicelinker-exchange/test/sample-netex.xml
+gsutil ls -l gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml
 ```
 
 Download and inspect:
 
 ```bash
-gsutil cp gs://servicelinker-exchange/test/sample-netex.xml processed.xml
+gsutil cp gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml processed.xml
 grep -c "ServiceLink" processed.xml
 ```
 
@@ -527,8 +528,8 @@ The `gcloud pubsub subscriptions pull` command should show the status message wi
 **Step 7: Clean up test data.**
 
 ```bash
-gsutil rm gs://marduk-exchange/test/sample-netex.xml
-gsutil rm gs://servicelinker-exchange/test/sample-netex.xml
+gsutil rm gs://marduk-exchange-dev/test/sample-netex.xml
+gsutil rm gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml
 ```
 
 ---

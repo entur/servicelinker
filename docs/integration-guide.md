@@ -188,13 +188,13 @@ Cross-project access is granted by the resource owner's Terraform:
 | Marduk SA → read `ror-ashur-exchange-gcp-*` | `entur/ashur` | `terraform/iam.tf` | `roles/storage.objectViewer` |
 | Servicelinker SA → read `marduk-exchange-*` | `entur/marduk` | `terraform/iam.tf` | `roles/storage.objectViewer` |
 | Servicelinker SA → publish to `ServicelinkerStatusQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.publisher` |
-| Servicelinker SA → subscribe to `ServicelinkerInboundQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.subscriber` |
-| Servicelinker SA → subscribe to `ServicelinkerStatusQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.subscriber` |
+| Servicelinker Terraform SA → subscribe to `ServicelinkerInboundQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.subscriber` |
+| Servicelinker Terraform SA → subscribe to `ServicelinkerStatusQueue` | `entur/marduk` | `terraform/iam.tf` | `roles/pubsub.subscriber` |
 | Marduk SA → read `ror-servicelinker-exchange-gcp-*` | `entur/servicelinker` | `terraform/iam.tf` | `roles/storage.objectViewer` |
 
 **Pattern:** The repo that *owns* the resource grants access to external service accounts.
 
-**Note on cross-project subscriptions:** When Servicelinker's Terraform creates a subscription in `ent-servicelnk-*` that references a topic in `ent-marduk-*`, the creating SA needs `pubsub.topics.attachSubscription` on the topic. This permission is included in `roles/pubsub.subscriber`, which must be granted on each topic by the topic owner (Marduk).
+**Note on cross-project subscriptions:** When Servicelinker's Terraform creates a subscription in `ent-servicelnk-*` that references a topic in `ent-marduk-*`, the Terraform CI/CD SA (`gh-servicelinker-5cdd-{env}@ent-github-shr.iam.gserviceaccount.com`, via Workload Identity Federation) needs `pubsub.topics.attachSubscription` on the topic. This permission is included in `roles/pubsub.subscriber`, which must be granted on each topic by the topic owner (Marduk).
 
 ## Terraform: What Has Been Created
 
@@ -205,8 +205,8 @@ Cross-project access is granted by the resource owner's Terraform:
 | Internal GCS bucket (`ror-servicelinker-internal-gcp-{suffix}`) | `google_storage_bucket` | `storage.tf` | Done |
 | Exchange GCS bucket (`ror-servicelinker-exchange-gcp-{suffix}`) | `google_storage_bucket` | `storage.tf` | Done |
 | Marduk SA → read exchange bucket | `google_storage_bucket_iam_member` | `iam.tf` | Done |
-| Subscription to `ServicelinkerInboundQueue` | `google_pubsub_subscription` | `pubsub.tf` | Commented out (waiting for Marduk subscriber grants) |
-| Subscription to `ServicelinkerStatusQueue` | `google_pubsub_subscription` | `pubsub.tf` | Commented out (waiting for Marduk subscriber grants) |
+| Subscription to `ServicelinkerInboundQueue` | `google_pubsub_subscription` | `pubsub.tf` | Done |
+| Subscription to `ServicelinkerStatusQueue` | `google_pubsub_subscription` | `pubsub.tf` | Done |
 
 ### Marduk's Terraform (`entur/marduk`, `terraform/`)
 
@@ -216,13 +216,13 @@ Cross-project access is granted by the resource owner's Terraform:
 | Topic `ServicelinkerStatusQueue` | `google_pubsub_topic` | `pubsub.tf` | Done |
 | Servicelinker SA → read `marduk-exchange-*` | `google_storage_bucket_iam_member` | `iam.tf` | Done |
 | Servicelinker SA → publish to `ServicelinkerStatusQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done |
-| Servicelinker SA → subscribe to `ServicelinkerInboundQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done (not yet applied) |
-| Servicelinker SA → subscribe to `ServicelinkerStatusQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done (not yet applied) |
+| Servicelinker Terraform SA → subscribe to `ServicelinkerInboundQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done |
+| Servicelinker Terraform SA → subscribe to `ServicelinkerStatusQueue` | `google_pubsub_topic_iam_member` | `iam.tf` | Done |
 
-### Deployment order
+### Deployment order (completed for dev)
 
 1. Apply Marduk's Terraform (creates topics, app IAM grants, and Terraform SA subscriber grants)
-2. Uncomment subscriptions in Servicelinker's `pubsub.tf` and apply
+2. Apply Servicelinker's Terraform (creates cross-project subscriptions)
 3. Verify subscriptions were created (see below)
 
 ### Verifying Marduk's Terraform has been applied
@@ -268,7 +268,7 @@ All three repos use the same conventions:
 - **Labels:** `manager=terraform`, `team=ror`, `slack=talk-ror`, `app={service}`
 - **Bucket settings:** Uniform bucket-level access, public access prevention enforced, versioning off, logging enabled
 - **Pub/Sub subscriptions:** `message_retention_duration=3600s`, `ack_deadline_seconds=600`, no expiry (`ttl=""`), retry backoff 10s–600s
-- **CI/CD:** Servicelinker uses `entur/gha-terraform@v2` workflows (lint, plan, apply). Marduk and Ashur do not have Terraform CI/CD yet.
+- **CI/CD:** Servicelinker uses `entur/gha-terraform@v2` workflows (lint, plan, apply). Marduk and Ashur use Harness for Terraform.
 
 ## Message Contract
 
@@ -301,7 +301,7 @@ Following the same pattern Ashur uses, Servicelinker publishes status messages w
 | File | What it does |
 |---|---|
 | `terraform/storage.tf` | Creates internal + exchange buckets (`ror-servicelinker-{internal,exchange}-gcp-{suffix}`) |
-| `terraform/pubsub.tf` | Cross-project subscriptions to `ServicelinkerInboundQueue` and `ServicelinkerStatusQueue` (currently commented out) |
+| `terraform/pubsub.tf` | Cross-project subscriptions to `ServicelinkerInboundQueue` and `ServicelinkerStatusQueue` |
 | `terraform/iam.tf` | Grants Marduk SA read access to exchange bucket |
 | `.github/workflows/terraform.yml` | Terraform CI/CD via `entur/gha-terraform@v2` |
 
@@ -310,7 +310,7 @@ Following the same pattern Ashur uses, Servicelinker publishes status messages w
 | File | What it does |
 |---|---|
 | `terraform/pubsub.tf` | Creates Pub/Sub topics including `ServicelinkerInboundQueue` and `ServicelinkerStatusQueue` |
-| `terraform/iam.tf` | Grants Ashur + Servicelinker SA access to exchange bucket and publish rights to status topics |
+| `terraform/iam.tf` | Grants Ashur + Servicelinker SA access to exchange bucket, publish rights to status topics, and Servicelinker Terraform SA subscriber rights for cross-project subscriptions |
 | `src/.../AntuNetexValidationStatusRouteBuilder.java` | Routes from `direct:antuNetexValidationComplete` to `direct:ashurNetexFilterAfterPreValidation`. **This is the file that needs modification to insert Servicelinker** (publish to `ServicelinkerInboundQueue` instead of going directly to Ashur). |
 | `src/.../AshurFilteringStatusRouteBuilder.java` | Consumes from `FilterNetexFileStatusQueue`, copies result, triggers post-validation |
 | `src/.../Constants.java` | Defines all header/attribute constants |
