@@ -23,13 +23,13 @@ class PubSubMessageHandler(
     @ServiceActivator(inputChannel = "servicelinkerInputChannel")
     fun handleMessage(message: Message<*>) {
         val acker = message.headers[GcpPubSubHeaders.ORIGINAL_MESSAGE] as? BasicAcknowledgeablePubsubMessage
+        val attributes = acker?.pubsubMessage?.attributesMap ?: emptyMap()
+        val correlationId = attributes["RutebankenCorrelationId"] ?: ""
+        val datasetReferential = attributes["EnturDatasetReferential"] ?: ""
 
         try {
-            val attributes = acker?.pubsubMessage?.attributesMap ?: emptyMap()
             val targetFileHandle = attributes["RutebankenTargetFileHandle"]
                 ?: throw IllegalArgumentException("Message missing 'RutebankenTargetFileHandle' attribute")
-            val correlationId = attributes["RutebankenCorrelationId"] ?: ""
-            val datasetReferential = attributes["EnturDatasetReferential"] ?: ""
 
             logger.info("Received PubSub message: file=$targetFileHandle, correlationId=$correlationId, referential=$datasetReferential")
 
@@ -37,7 +37,6 @@ class PubSubMessageHandler(
 
             logger.info("Processing complete. Added $addedCount ServiceLinks. Publishing status.")
 
-            val outputPath = targetFileHandle
             pubSubTemplate.publish(
                 outboundTopic,
                 "",
@@ -45,7 +44,7 @@ class PubSubMessageHandler(
                     "RutebankenCorrelationId" to correlationId,
                     "EnturDatasetReferential" to datasetReferential,
                     "Status" to "SUCCESS",
-                    "LinkedNetexFilePath" to outputPath,
+                    "LinkedNetexFilePath" to targetFileHandle,
                     "addedServiceLinksCount" to addedCount.toString()
                 )
             )
@@ -53,7 +52,21 @@ class PubSubMessageHandler(
             acker?.ack()
             logger.info("Message acknowledged for correlationId=$correlationId")
         } catch (e: Exception) {
-            logger.error("Failed to process PubSub message after $MAX_RETRIES attempts: ${e.message}")
+            logger.error("Failed to process PubSub message: ${e.message}", e)
+            try {
+                pubSubTemplate.publish(
+                    outboundTopic,
+                    "",
+                    mapOf(
+                        "RutebankenCorrelationId" to correlationId,
+                        "EnturDatasetReferential" to datasetReferential,
+                        "Status" to "FAILED",
+                        "LinkingFailureReason" to (e.message ?: "Unknown error")
+                    )
+                )
+            } catch (publishEx: Exception) {
+                logger.error("Failed to publish FAILED status for correlationId=$correlationId: ${publishEx.message}")
+            }
             acker?.ack()
         }
     }
