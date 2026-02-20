@@ -45,9 +45,7 @@ class PubSubMessageHandler(
             pubSubTemplate.publish(
                 outboundTopic,
                 "",
-                mapOf(
-                    "RutebankenCorrelationId" to correlationId,
-                    "EnturDatasetReferential" to datasetReferential,
+                attributes.toMap() + mapOf(
                     "Status" to "SUCCESS",
                     "LinkedNetexFilePath" to targetFileHandle,
                     "addedServiceLinksCount" to addedCount.toString()
@@ -62,9 +60,7 @@ class PubSubMessageHandler(
                 pubSubTemplate.publish(
                     outboundTopic,
                     "",
-                    mapOf(
-                        "RutebankenCorrelationId" to correlationId,
-                        "EnturDatasetReferential" to datasetReferential,
+                    attributes.toMap() + mapOf(
                         "Status" to "FAILED",
                         "LinkingFailureReason" to (e.message ?: "Unknown error")
                     )
