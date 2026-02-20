@@ -698,7 +698,7 @@ class NetexProcessorTest {
             )
         )
 
-        val (processedXml, addedCount) = netexProcessor.processNetexFile(
+        val (_, addedCount) = netexProcessor.processNetexFile(
             xml.byteInputStream(),
             externalStops
         )

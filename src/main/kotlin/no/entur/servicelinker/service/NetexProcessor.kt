@@ -29,6 +29,7 @@ class NetexProcessor(
         externalStopPoints: Map<String, StopPoint> = emptyMap()
     ): Pair<ByteArray, Int> {
         logger.info("Starting NeTEx file processing")
+        @Suppress("BlockingMethodInNonBlockingContext") // Always a ByteArrayInputStream in practice
         val inputBytes = inputStream.readAllBytes()
         val document = parseXmlDocument(ByteArrayInputStream(inputBytes))
 
