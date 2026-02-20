@@ -71,8 +71,8 @@ class NetexProcessor(
                 logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
                 null
             }
-            if (route != null && route.distance > MAX_DISTANCE_METERS) {
-                logger.info("Skipping pair ${pair.from.id} → ${pair.to.id}: distance ${route.distance}m exceeds max")
+            if (route != null && route.distance > MAX_ROUTE_DISTANCE_METERS) {
+                logger.info("Skipping pair ${pair.from.id} → ${pair.to.id}: route distance ${route.distance}m exceeds max")
                 continue
             }
             val serviceLinkElement = createServiceLinkElement(document, pair, route)
@@ -430,6 +430,6 @@ class NetexProcessor(
 
     companion object {
         const val SRS_NAME_WGS84: String = "EPSG:4326"
-        const val MAX_DISTANCE_METERS = 100000
+        const val MAX_ROUTE_DISTANCE_METERS = 5_000_000 // 5000 km — sanity limit
     }
 }

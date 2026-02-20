@@ -73,11 +73,12 @@ class OSRMService(
             val webClient = getWebClient(baseUrl)
             val coordinates = "$from;$to"
 
-            logger.debug("Calculating route from $from to $to using OSRM at $baseUrl (mode: $modeKey)")
+            val overview = if (from.haversineDistanceTo(to) > SIMPLIFIED_THRESHOLD_METERS) "simplified" else "full"
+            logger.debug("Calculating route from $from to $to using OSRM at $baseUrl (mode: $modeKey, overview: $overview)")
 
             val response = webClient.get()
-                .uri("/route/v1/driving/{coordinates}?alternatives=false&steps=false&overview=full&geometries=polyline") { uriBuilder ->
-                    uriBuilder.build(coordinates)
+                .uri("/route/v1/driving/{coordinates}?alternatives=false&steps=false&overview={overview}&geometries=polyline") { uriBuilder ->
+                    uriBuilder.build(coordinates, overview)
                 }
                 .retrieve()
                 .awaitBody<OSRMResponse>()
@@ -102,4 +103,8 @@ class OSRMService(
     }
 
     fun getCacheSize(): Int = routeCache.size
+
+    companion object {
+        const val SIMPLIFIED_THRESHOLD_METERS = 30_000.0
+    }
 }
