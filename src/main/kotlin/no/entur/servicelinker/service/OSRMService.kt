@@ -12,13 +12,15 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBody
 import reactor.netty.http.client.HttpClient
 import java.time.Duration
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 @ConfigurationProperties(prefix = "osrm")
 data class OsrmProperties(
     val urls: Map<String, String> = emptyMap(),
     val timeout: Long = 30000,
-    val cacheRoutes: Boolean = true
+    val cacheRoutes: Boolean = true,
+    val cacheMaxSize: Int = 40_000
 )
 
 @Service
@@ -27,7 +29,15 @@ class OSRMService(
 ) {
     private val logger = LoggerFactory.getLogger(OSRMService::class.java)
     private val webClients = ConcurrentHashMap<String, WebClient>()
-    private val routeCache = ConcurrentHashMap<String, OSRMRoute>()
+
+    // LRU cache: ~2 KB avg per entry (polyline geometry), 40k entries ≈ 80 MB
+    private val routeCache: MutableMap<String, OSRMRoute> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, OSRMRoute>(osrmProperties.cacheMaxSize, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, OSRMRoute>?): Boolean {
+                return size > osrmProperties.cacheMaxSize
+            }
+        }
+    )
 
     private fun getWebClient(baseUrl: String): WebClient {
         return webClients.computeIfAbsent(baseUrl) {
