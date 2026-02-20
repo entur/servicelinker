@@ -11,14 +11,15 @@ import org.w3c.dom.Element
 import reactor.netty.http.client.HttpClient
 import java.io.ByteArrayInputStream
 import java.time.Duration
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
 import javax.xml.parsers.DocumentBuilderFactory
 
 @ConfigurationProperties(prefix = "nsr")
 data class NsrProperties(
     val baseUrl: String = "https://api.entur.io/stop-places/v1/read",
     val timeout: Long = 10000,
-    val cacheCoordinates: Boolean = true
+    val cacheCoordinates: Boolean = true,
+    val cacheMaxSize: Int = 50_000
 )
 
 @Service
@@ -26,7 +27,15 @@ class NsrService(
     private val nsrProperties: NsrProperties
 ) {
     private val logger = LoggerFactory.getLogger(NsrService::class.java)
-    private val coordinateCache = ConcurrentHashMap<String, Coordinate>()
+
+    // LRU cache: ~300 bytes per entry, 50k entries ≈ 15 MB
+    private val coordinateCache: MutableMap<String, Coordinate> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Coordinate>(nsrProperties.cacheMaxSize, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Coordinate>?): Boolean {
+                return size > nsrProperties.cacheMaxSize
+            }
+        }
+    )
 
     private val webClient: WebClient by lazy {
         WebClient.builder()
@@ -101,11 +110,6 @@ class NsrService(
         return if (elements.length > 0) {
             elements.item(0).textContent?.trim()
         } else null
-    }
-
-    fun clearCache() {
-        coordinateCache.clear()
-        logger.info("NSR coordinate cache cleared")
     }
 
     fun getCacheSize(): Int = coordinateCache.size
