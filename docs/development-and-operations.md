@@ -107,7 +107,7 @@ curl -s -X POST \
 Verify the file was uploaded:
 
 ```bash
-curl -s "http://localhost:4443/storage/v1/b/marduk-exchange/o" | python3 -m json.tool
+curl -s "http://localhost:4443/storage/v1/b/marduk-exchange/o" | jq .
 ```
 
 **Step 3: Publish a message to the inbound topic.**
@@ -146,7 +146,7 @@ Message acknowledged for correlationId=manual-test-001
 The processed file is written to the output bucket at the same object path:
 
 ```bash
-curl -s "http://localhost:4443/storage/v1/b/servicelinker-exchange/o" | python3 -m json.tool
+curl -s "http://localhost:4443/storage/v1/b/servicelinker-exchange/o" | jq .
 ```
 
 Download and inspect the processed file:
@@ -180,7 +180,7 @@ If you didn't start the monitoring script, you can pull manually:
 curl -s -X POST \
   "http://localhost:8085/v1/projects/local-project/subscriptions/ServicelinkerStatusQueue:pull" \
   -H "Content-Type: application/json" \
-  -d '{"maxMessages": 10}' | python3 -m json.tool
+  -d '{"maxMessages": 10}' | jq .
 ```
 
 ### REST API (for manual processing/debugging)
@@ -451,15 +451,7 @@ Open two terminals:
 kubectl logs -l app=servicelinker -n servicelinker --tail=0 -f
 ```
 
-```bash
-# Terminal 2: poll the status subscription for the completion message
-gcloud pubsub subscriptions pull ServicelinkerStatusQueue \
-  --project=ent-servicelnk-dev \
-  --auto-ack --limit=1 --wait
-```
-
-The `--wait` flag blocks until a message arrives (up to a timeout). If your `gcloud` version doesn't support `--wait`, run the pull command
-after step 3 instead.
+Terminal 2 is used in step 6 to pull the status message after processing completes.
 
 **Step 2: Upload a test NeTEx file to the input bucket.**
 
@@ -479,9 +471,7 @@ gsutil ls -l gs://marduk-exchange-dev/test/sample-netex.xml
 ```bash
 gcloud pubsub topics publish ServicelinkerInboundQueue \
   --project=ent-marduk-dev \
-  --attribute=RutebankenTargetFileHandle=test/sample-netex.xml \
-  --attribute=RutebankenCorrelationId=manual-dev-test-001 \
-  --attribute=EnturDatasetReferential=rb_test \
+  --attribute="RutebankenTargetFileHandle=test/sample-netex.xml,RutebankenCorrelationId=manual-dev-test-001,EnturDatasetReferential=rb_test" \
   --message=""
 ```
 
@@ -515,7 +505,15 @@ grep -c "ServiceLink" processed.xml
 
 **Step 6: Check the status PubSub message (terminal 2).**
 
-The `gcloud pubsub subscriptions pull` command should show the status message with these attributes:
+In terminal 2, pull from the status subscription:
+
+```bash
+gcloud pubsub subscriptions pull ServicelinkerStatusQueue \
+  --project=ent-servicelnk-dev \
+  --auto-ack --limit=1
+```
+
+The output should show a message with these attributes:
 
 | Attribute | Expected value |
 |-----------|----------------|

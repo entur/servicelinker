@@ -33,6 +33,7 @@ docker-compose up --build # full local stack with emulators
 
 ## Key Conventions
 
+- NeTEx files must always follow the Nordic NeTEx profile
 - Spring profiles activated by `COMMON_ENV` env var: `dev`, `tst`, `prd`
 - PubSub topics/subscriptions are in Marduk's GCP project (`ent-marduk-*`), subscriptions in Servicelinker's project (`ent-servicelnk-*`)
 - Outbound topic config must use full path (`projects/ent-marduk-{env}/topics/...`) for cross-project publishing

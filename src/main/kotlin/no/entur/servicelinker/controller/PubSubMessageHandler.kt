@@ -24,6 +24,11 @@ class PubSubMessageHandler(
     fun handleMessage(message: Message<*>) {
         val acker = message.headers[GcpPubSubHeaders.ORIGINAL_MESSAGE] as? BasicAcknowledgeablePubsubMessage
         val attributes = acker?.pubsubMessage?.attributesMap ?: emptyMap()
+
+        logger.debug("Message headers: {}", message.headers.keys)
+        logger.debug("Original message type: {}", message.headers[GcpPubSubHeaders.ORIGINAL_MESSAGE]?.javaClass?.name ?: "null")
+        logger.debug("PubSub attributes: {}", attributes)
+
         val correlationId = attributes["RutebankenCorrelationId"] ?: ""
         val datasetReferential = attributes["EnturDatasetReferential"] ?: ""
 
