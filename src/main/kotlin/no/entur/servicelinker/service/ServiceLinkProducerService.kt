@@ -46,6 +46,8 @@ class ServiceLinkProducerService(
         return totalAdded
     }
 
+    suspend fun processZipDirectly(zipData: ByteArray): Pair<ByteArray, Int> = processZipArchive(zipData)
+
     private suspend fun processZipArchive(zipData: ByteArray): Pair<ByteArray, Int> {
         // First pass: collect stop points and stop assignments (lightweight — only keeps extracted data, not raw XML)
         val allStopPoints = mutableMapOf<String, StopPoint>()

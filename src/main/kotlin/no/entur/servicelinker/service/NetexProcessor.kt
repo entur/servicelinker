@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.w3c.dom.Document
 import org.w3c.dom.Element
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import javax.xml.parsers.DocumentBuilderFactory
@@ -28,7 +29,8 @@ class NetexProcessor(
         externalStopPoints: Map<String, StopPoint> = emptyMap()
     ): Pair<ByteArray, Int> {
         logger.info("Starting NeTEx file processing")
-        val document = parseXmlDocument(inputStream)
+        val inputBytes = inputStream.readAllBytes()
+        val document = parseXmlDocument(ByteArrayInputStream(inputBytes))
 
         val localStops = extractStopPoints(document).associateBy { it.id }
 
@@ -56,20 +58,12 @@ class NetexProcessor(
         }
         logger.info("Found ${neededPairs.size} consecutive pairs that need new service links")
 
-        // Create ServiceLink elements for new pairs
-        var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
-        if (serviceLinksSection == null) {
-            val serviceFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
-                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
-                ?: document.documentElement
-            serviceLinksSection = document.createElement("serviceLinks")
-            serviceFrame.appendChild(serviceLinksSection)
-        }
-
         // allServiceLinks: pairKey → serviceLinkId (existing + newly created)
         val allServiceLinks = existingServiceLinks.toMutableMap()
         var addedCount = 0
 
+        // Build new ServiceLink elements, but only touch the document if we actually add any
+        val newServiceLinkElements = mutableListOf<Pair<String, Element>>()
         for ((pairKey, pair) in neededPairs) {
             val route = try {
                 osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
@@ -82,9 +76,27 @@ class NetexProcessor(
                 continue
             }
             val serviceLinkElement = createServiceLinkElement(document, pair, route)
-            serviceLinksSection.appendChild(serviceLinkElement)
             allServiceLinks[pairKey] = serviceLinkElement.getAttribute("id")
+            newServiceLinkElements.add(pairKey to serviceLinkElement)
             addedCount++
+        }
+
+        if (addedCount == 0) {
+            logger.info("NeTEx processing completed. No service links to add")
+            return Pair(inputBytes, 0)
+        }
+
+        // Append new ServiceLinks to the document
+        var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
+        if (serviceLinksSection == null) {
+            val serviceFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
+                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
+                ?: document.documentElement
+            serviceLinksSection = document.createElement("serviceLinks")
+            serviceFrame.appendChild(serviceLinksSection)
+        }
+        for ((_, element) in newServiceLinkElements) {
+            serviceLinksSection.appendChild(element)
         }
 
         // Add linksInSequence to each JourneyPattern

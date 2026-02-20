@@ -2,6 +2,8 @@ package no.entur.servicelinker.controller
 
 import no.entur.servicelinker.service.ServiceLinkProducerService
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpHeaders
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
@@ -28,6 +30,26 @@ class ServiceLinkController(
         } else {
             ResponseEntity.badRequest()
                 .body("<?xml version=\"1.0\" encoding=\"UTF-8\"?><error>${result.errorMessage}</error>")
+        }
+    }
+
+    @PostMapping("/process-zip", consumes = ["application/zip", "application/octet-stream"])
+    suspend fun processZipFile(
+        @RequestBody zipData: ByteArray,
+        @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.zip"
+    ): ResponseEntity<ByteArray> {
+        logger.info("Manual ZIP processing request for file: $filename")
+
+        return try {
+            val (processedZip, addedCount) = serviceLinkProducerService.processZipDirectly(zipData)
+            logger.info("Successfully processed ZIP. Added $addedCount ServiceLinks for file: $filename")
+            ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"processed_$filename\"")
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .body(processedZip)
+        } catch (e: Exception) {
+            logger.error("Error processing ZIP directly: $filename", e)
+            ResponseEntity.badRequest().build()
         }
     }
 
