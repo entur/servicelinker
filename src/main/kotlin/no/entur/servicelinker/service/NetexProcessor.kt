@@ -23,11 +23,18 @@ class NetexProcessor(
 ) {
     private val logger = LoggerFactory.getLogger(NetexProcessor::class.java)
 
-    suspend fun processNetexFile(inputStream: InputStream): Pair<ByteArray, Int> {
+    suspend fun processNetexFile(
+        inputStream: InputStream,
+        externalStopPoints: Map<String, StopPoint> = emptyMap()
+    ): Pair<ByteArray, Int> {
         logger.info("Starting NeTEx file processing")
         val document = parseXmlDocument(inputStream)
 
-        val stopPointsMap = extractStopPoints(document).associateBy { it.id }
+        val localStops = extractStopPoints(document).associateBy { it.id }
+
+        // Merge: local takes priority over external (which may include NSR-enriched stops)
+        val stopPointsMap = externalStopPoints + localStops
+
         val existingServiceLinks = extractExistingServiceLinks(document)
         val journeyPatterns = extractJourneyPatterns(document)
 
@@ -91,14 +98,36 @@ class NetexProcessor(
         return Pair(modifiedXml, addedCount)
     }
 
-    private fun parseXmlDocument(inputStream: InputStream): Document {
+    fun parseXmlDocument(inputStream: InputStream): Document {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
         val builder = factory.newDocumentBuilder()
         return builder.parse(inputStream)
     }
 
-    private fun extractStopPoints(document: Document): List<StopPoint> {
+    fun extractStopAssignments(document: Document): Map<String, String> {
+        val assignments = mutableMapOf<String, String>()
+
+        val passengerStopAssignments = document.getElementsByTagName("PassengerStopAssignment")
+        for (i in 0 until passengerStopAssignments.length) {
+            val element = passengerStopAssignments.item(i) as Element
+            val stopPointRef = (element.getElementsByTagName("ScheduledStopPointRef").item(0) as? Element)
+                ?.getAttribute("ref")
+            val quayRef = (element.getElementsByTagName("QuayRef").item(0) as? Element)
+                ?.getAttribute("ref")
+
+            if (!stopPointRef.isNullOrBlank() && !quayRef.isNullOrBlank()) {
+                assignments[stopPointRef] = quayRef
+            }
+        }
+
+        if (assignments.isNotEmpty()) {
+            logger.info("Extracted ${assignments.size} stop assignments (ScheduledStopPoint → Quay)")
+        }
+        return assignments
+    }
+
+    fun extractStopPoints(document: Document): List<StopPoint> {
         val stopPoints = mutableListOf<StopPoint>()
 
         val scheduledStopPoints = document.getElementsByTagName("ScheduledStopPoint")

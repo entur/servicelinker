@@ -22,6 +22,7 @@ class ZipHandlingTest {
 
     private lateinit var mockOsrmService: OSRMService
     private lateinit var mockGcsService: GcsService
+    private lateinit var mockNsrService: NsrService
     private lateinit var netexProcessor: NetexProcessor
     private lateinit var serviceLinkProducerService: ServiceLinkProducerService
 
@@ -32,9 +33,10 @@ class ZipHandlingTest {
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
         mockGcsService = mockk(relaxed = true)
+        mockNsrService = mockk(relaxed = true)
         netexProcessor = NetexProcessor(mockOsrmService)
         serviceLinkProducerService = ServiceLinkProducerService(
-            mockGcsService, netexProcessor, mockOsrmService, "test-output"
+            mockGcsService, netexProcessor, mockOsrmService, mockNsrService, "test-output"
         )
 
         coEvery {

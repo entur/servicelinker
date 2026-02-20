@@ -5,6 +5,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMRoute
+import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -533,6 +534,176 @@ class NetexProcessorTest {
         assertEquals(1, doc.getElementsByTagName("serviceLinks").length, "Should have created serviceLinks section")
         assertEquals(1, doc.getElementsByTagName("ServiceLink").length)
         assertEquals(1, doc.getElementsByTagName("ServiceLinkInJourneyPattern").length)
+    }
+
+    @Test
+    fun `should produce service links when stops have no coordinates but external stops are provided`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+
+        // Stops without coordinates + PassengerStopAssignments (like Havila ferry data)
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+                <dataObjects>
+                    <CompositeFrame id="HAV:CompositeFrame:1" version="1">
+                        <frames>
+                            <ServiceFrame id="HAV:ServiceFrame:1" version="1">
+                                <scheduledStopPoints>
+                                    <ScheduledStopPoint id="HAV:ScheduledStopPoint:BGO" version="1">
+                                        <Name>Bergen</Name>
+                                    </ScheduledStopPoint>
+                                    <ScheduledStopPoint id="HAV:ScheduledStopPoint:FRO" version="1">
+                                        <Name>Florø</Name>
+                                    </ScheduledStopPoint>
+                                </scheduledStopPoints>
+                                <journeyPatterns>
+                                    <JourneyPattern id="HAV:JourneyPattern:1" version="1">
+                                        <pointsInSequence>
+                                            <StopPointInJourneyPattern id="HAV:StopPointInJourneyPattern:1" version="1" order="1">
+                                                <ScheduledStopPointRef ref="HAV:ScheduledStopPoint:BGO" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                            <StopPointInJourneyPattern id="HAV:StopPointInJourneyPattern:2" version="1" order="2">
+                                                <ScheduledStopPointRef ref="HAV:ScheduledStopPoint:FRO" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                        </pointsInSequence>
+                                    </JourneyPattern>
+                                </journeyPatterns>
+                            </ServiceFrame>
+                        </frames>
+                    </CompositeFrame>
+                </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent()
+
+        // Simulate NSR-enriched external stop points (as ServiceLinkProducerService would provide)
+        val externalStops = mapOf(
+            "HAV:ScheduledStopPoint:BGO" to StopPoint(
+                id = "HAV:ScheduledStopPoint:BGO",
+                name = null,
+                coordinate = bergen,
+                transportMode = null,
+                version = null
+            ),
+            "HAV:ScheduledStopPoint:FRO" to StopPoint(
+                id = "HAV:ScheduledStopPoint:FRO",
+                name = null,
+                coordinate = Coordinate(61.6003, 5.0322),
+                transportMode = null,
+                version = null
+            )
+        )
+
+        val (processedXml, addedCount) = netexProcessor.processNetexFile(
+            xml.byteInputStream(),
+            externalStops
+        )
+
+        assertEquals(1, addedCount, "Should create service link using NSR-enriched coordinates")
+
+        val doc = parseXmlFromBytes(processedXml)
+        val serviceLinks = doc.getElementsByTagName("ServiceLink")
+        assertEquals(1, serviceLinks.length)
+
+        val link = serviceLinks.item(0) as Element
+        val fromRef = (link.getElementsByTagName("FromPointRef").item(0) as Element).getAttribute("ref")
+        val toRef = (link.getElementsByTagName("ToPointRef").item(0) as Element).getAttribute("ref")
+        assertEquals("HAV:ScheduledStopPoint:BGO", fromRef)
+        assertEquals("HAV:ScheduledStopPoint:FRO", toRef)
+
+        assertEquals(1, doc.getElementsByTagName("ServiceLinkInJourneyPattern").length)
+    }
+
+    @Test
+    fun `should extract stop assignments from PassengerStopAssignment elements`() {
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+                <dataObjects>
+                    <CompositeFrame id="HAV:CompositeFrame:1" version="1">
+                        <frames>
+                            <ServiceFrame id="HAV:ServiceFrame:1" version="1">
+                                <stopAssignments>
+                                    <PassengerStopAssignment id="HAV:PassengerStopAssignment:BGO" version="1">
+                                        <ScheduledStopPointRef ref="HAV:ScheduledStopPoint:BGO"/>
+                                        <QuayRef ref="NSR:Quay:102403"/>
+                                    </PassengerStopAssignment>
+                                    <PassengerStopAssignment id="HAV:PassengerStopAssignment:FRO" version="1">
+                                        <ScheduledStopPointRef ref="HAV:ScheduledStopPoint:FRO"/>
+                                        <QuayRef ref="NSR:Quay:103500"/>
+                                    </PassengerStopAssignment>
+                                </stopAssignments>
+                            </ServiceFrame>
+                        </frames>
+                    </CompositeFrame>
+                </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent()
+
+        val document = parseXmlFromStream(xml.byteInputStream())
+        val assignments = netexProcessor.extractStopAssignments(document)
+
+        assertEquals(2, assignments.size)
+        assertEquals("NSR:Quay:102403", assignments["HAV:ScheduledStopPoint:BGO"])
+        assertEquals("NSR:Quay:103500", assignments["HAV:ScheduledStopPoint:FRO"])
+    }
+
+    @Test
+    fun `should prefer local coordinates over external stops`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+                <dataObjects>
+                    <CompositeFrame id="TST:CompositeFrame:1" version="1">
+                        <frames>
+                            <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                                <scheduledStopPoints>
+                                    <ScheduledStopPoint id="TST:ScheduledStopPoint:1" version="1">
+                                        <Name>Stop A</Name>
+                                        <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
+                                    </ScheduledStopPoint>
+                                    <ScheduledStopPoint id="TST:ScheduledStopPoint:2" version="1">
+                                        <Name>Stop B</Name>
+                                        <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
+                                    </ScheduledStopPoint>
+                                </scheduledStopPoints>
+                                <journeyPatterns>
+                                    <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                                        <pointsInSequence>
+                                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:1" version="1" order="1">
+                                                <ScheduledStopPointRef ref="TST:ScheduledStopPoint:1" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:2" version="1" order="2">
+                                                <ScheduledStopPointRef ref="TST:ScheduledStopPoint:2" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                        </pointsInSequence>
+                                    </JourneyPattern>
+                                </journeyPatterns>
+                            </ServiceFrame>
+                        </frames>
+                    </CompositeFrame>
+                </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent()
+
+        // External stops with different coordinates — local should win
+        val externalStops = mapOf(
+            "TST:ScheduledStopPoint:1" to StopPoint(
+                id = "TST:ScheduledStopPoint:1",
+                name = "External Stop A",
+                coordinate = Coordinate(0.0, 0.0),
+                transportMode = null,
+                version = null
+            )
+        )
+
+        val (processedXml, addedCount) = netexProcessor.processNetexFile(
+            xml.byteInputStream(),
+            externalStops
+        )
+
+        assertEquals(1, addedCount, "Should still produce service link using local coordinates")
     }
 
     private fun parseXmlFromStream(inputStream: InputStream): Document {

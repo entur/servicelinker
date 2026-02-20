@@ -1,6 +1,7 @@
 package no.entur.servicelinker.service
 
 import no.entur.servicelinker.model.DirectProcessingResult
+import no.entur.servicelinker.model.StopPoint
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
@@ -15,6 +16,7 @@ class ServiceLinkProducerService(
     private val gcsService: GcsService,
     private val netexProcessor: NetexProcessor,
     private val osrmService: OSRMService,
+    private val nsrService: NsrService,
     @Value("\${gcs.bucket.output}") private val outputBucket: String
 ) {
     private val logger = LoggerFactory.getLogger(ServiceLinkProducerService::class.java)
@@ -45,6 +47,37 @@ class ServiceLinkProducerService(
     }
 
     private suspend fun processZipArchive(zipData: ByteArray): Pair<ByteArray, Int> {
+        // First pass: collect stop points and stop assignments (lightweight — only keeps extracted data, not raw XML)
+        val allStopPoints = mutableMapOf<String, StopPoint>()
+        val allStopAssignments = mutableMapOf<String, String>()
+
+        ZipInputStream(ByteArrayInputStream(zipData)).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory && entry.name.endsWith(".xml", ignoreCase = true)) {
+                    try {
+                        val entryBytes = zis.readBytes()
+                        val document = netexProcessor.parseXmlDocument(ByteArrayInputStream(entryBytes))
+                        val stops = netexProcessor.extractStopPoints(document).associateBy { it.id }
+                        val assignments = netexProcessor.extractStopAssignments(document)
+                        allStopPoints.putAll(stops)
+                        allStopAssignments.putAll(assignments)
+                    } catch (e: Exception) {
+                        logger.warn("First pass failed for ${entry.name}: ${e.message}")
+                    }
+                }
+                entry = zis.nextEntry
+            }
+        }
+
+        // Enrich: resolve coordinates via NSR only for stops that have an assignment but no coordinates
+        val enrichedStopPoints = enrichStopPointsViaNsr(allStopPoints, allStopAssignments)
+
+        logger.info("ZIP first pass: ${allStopPoints.size} stops with coordinates, " +
+                "${enrichedStopPoints.size - allStopPoints.size} enriched via NSR, " +
+                "${allStopAssignments.size} stop assignments")
+
+        // Second pass: re-read ZIP from original bytes, process each entry with enriched stop map
         val outputBuffer = ByteArrayOutputStream()
         var totalAdded = 0
 
@@ -57,7 +90,8 @@ class ServiceLinkProducerService(
                     if (!entry.isDirectory && entry.name.endsWith(".xml", ignoreCase = true)) {
                         logger.info("Processing XML entry: ${entry.name}")
                         val (processedXml, addedCount) = netexProcessor.processNetexFile(
-                            ByteArrayInputStream(entryData)
+                            ByteArrayInputStream(entryData),
+                            enrichedStopPoints
                         )
                         totalAdded += addedCount
 
@@ -77,14 +111,18 @@ class ServiceLinkProducerService(
     }
 
     private suspend fun processSingleXml(xmlData: ByteArray): Pair<ByteArray, Int> {
-        return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData))
+        val enrichedStops = extractAndEnrichStops(xmlData)
+        return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData), enrichedStops)
     }
 
     suspend fun processXmlContentDirectly(xmlContent: String, filename: String): DirectProcessingResult {
         return try {
             logger.info("Starting direct ServiceLink production for XML content: $filename")
+            val xmlData = xmlContent.toByteArray(Charsets.UTF_8)
+            val enrichedStops = extractAndEnrichStops(xmlData)
             val (processedXml, addedCount) = netexProcessor.processNetexFile(
-                xmlContent.byteInputStream(Charsets.UTF_8)
+                ByteArrayInputStream(xmlData),
+                enrichedStops
             )
             logger.info("Successfully processed XML content. Added $addedCount ServiceLinks for file: $filename")
             DirectProcessingResult(
@@ -101,6 +139,45 @@ class ServiceLinkProducerService(
                 errorMessage = "Processing error: ${e.message}"
             )
         }
+    }
+
+    private suspend fun extractAndEnrichStops(xmlData: ByteArray): Map<String, StopPoint> {
+        return try {
+            val document = netexProcessor.parseXmlDocument(ByteArrayInputStream(xmlData))
+            val stops = netexProcessor.extractStopPoints(document).associateBy { it.id }
+            val assignments = netexProcessor.extractStopAssignments(document)
+            enrichStopPointsViaNsr(stops, assignments)
+        } catch (e: Exception) {
+            logger.warn("Failed to extract/enrich stops for NSR lookup: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    private suspend fun enrichStopPointsViaNsr(
+        stopPoints: Map<String, StopPoint>,
+        stopAssignments: Map<String, String>
+    ): Map<String, StopPoint> {
+        val enriched = stopPoints.toMutableMap()
+
+        for ((stopPointRef, quayRef) in stopAssignments) {
+            if (!enriched.containsKey(stopPointRef)) {
+                val coordinate = nsrService.getQuayCoordinates(quayRef)
+                if (coordinate != null) {
+                    enriched[stopPointRef] = StopPoint(
+                        id = stopPointRef,
+                        name = null,
+                        coordinate = coordinate,
+                        transportMode = null,
+                        version = null
+                    )
+                    logger.debug("Enriched stop {} with coordinates from NSR quay {}", stopPointRef, quayRef)
+                } else {
+                    logger.warn("Could not resolve coordinates for stop {} via NSR quay {}", stopPointRef, quayRef)
+                }
+            }
+        }
+
+        return enriched
     }
 
     fun getRoutingCacheStatistics(): Map<String, Any> {
