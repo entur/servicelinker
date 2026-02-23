@@ -26,7 +26,8 @@ class NetexProcessor(
 
     suspend fun processNetexFile(
         inputStream: InputStream,
-        externalStopPoints: Map<String, StopPoint> = emptyMap()
+        externalStopPoints: Map<String, StopPoint> = emptyMap(),
+        modesFilter: Set<String>? = null
     ): Pair<ByteArray, Int> {
         logger.info("Starting NeTEx file processing")
         @Suppress("BlockingMethodInNonBlockingContext") // Always a ByteArrayInputStream in practice
@@ -66,6 +67,10 @@ class NetexProcessor(
         // Build new ServiceLink elements, but only touch the document if we actually add any
         val newServiceLinkElements = mutableListOf<Pair<String, Element>>()
         for ((pairKey, pair) in neededPairs) {
+            if (modesFilter != null && !modesFilter.contains(pair.from.transportMode?.name)) {
+                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: mode ${pair.from.transportMode} not in filter $modesFilter")
+                continue
+            }
             val route = try {
                 osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
             } catch (_: Exception) {

@@ -1,6 +1,7 @@
 package no.entur.servicelinker.service
 
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
@@ -121,6 +122,24 @@ class ZipHandlingTest {
         val addedCount = serviceLinkProducerService.processDataset("test-bucket", "test.xml")
 
         assertTrue(addedCount > 0, "Should have added service links from single XML")
+    }
+
+    @Test
+    fun `empty modesFilter short-circuits processing, uploads original data, and returns zero`() = runTest {
+        val testZip = createTestZip()
+
+        var uploadedData: ByteArray? = null
+        coEvery { mockGcsService.downloadFile("test-bucket", "test.zip") } returns testZip
+        coEvery { mockGcsService.uploadFile(any<ByteArray>(), any<String>(), any<String>(), any()) } answers {
+            uploadedData = firstArg()
+        }
+
+        val addedCount = serviceLinkProducerService.processDataset("test-bucket", "test.zip", emptySet())
+
+        assertEquals(0, addedCount, "Empty modesFilter should produce zero service links")
+        assertNotNull(uploadedData, "Original data should still be uploaded")
+        assertEquals(testZip.size, requireNotNull(uploadedData).size, "Uploaded data should be the original unmodified ZIP")
+        coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
     }
 
     @Test

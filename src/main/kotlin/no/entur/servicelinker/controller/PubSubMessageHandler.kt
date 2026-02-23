@@ -31,14 +31,17 @@ class PubSubMessageHandler(
 
         val correlationId = attributes["RutebankenCorrelationId"] ?: ""
         val datasetReferential = attributes["EnturDatasetReferential"] ?: ""
+        val modesFilter: Set<String>? = attributes["ServiceLinkModes"]?.let { value ->
+            if (value.isBlank()) emptySet() else value.split(",").map { it.trim().uppercase() }.toSet()
+        }
 
         try {
             val targetFileHandle = attributes["RutebankenTargetFileHandle"]
                 ?: throw IllegalArgumentException("Message missing 'RutebankenTargetFileHandle' attribute")
 
-            logger.info("Received PubSub message: file=$targetFileHandle, correlationId=$correlationId, referential=$datasetReferential")
+            logger.info("Received PubSub message: file=$targetFileHandle, correlationId=$correlationId, referential=$datasetReferential, modesFilter=$modesFilter")
 
-            val addedCount = processWithRetry(inputBucket, targetFileHandle)
+            val addedCount = processWithRetry(inputBucket, targetFileHandle, modesFilter)
 
             logger.info("Processing complete. Added $addedCount ServiceLinks. Publishing status.")
 
@@ -72,12 +75,12 @@ class PubSubMessageHandler(
         }
     }
 
-    private fun processWithRetry(bucketName: String, objectName: String): Int {
+    private fun processWithRetry(bucketName: String, objectName: String, modesFilter: Set<String>?): Int {
         var lastException: Exception? = null
         repeat(MAX_RETRIES) { attempt ->
             try {
                 return runBlocking {
-                    serviceLinkProducerService.processDataset(bucketName, objectName)
+                    serviceLinkProducerService.processDataset(bucketName, objectName, modesFilter)
                 }
             } catch (e: Exception) {
                 lastException = e

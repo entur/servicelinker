@@ -21,18 +21,24 @@ class ServiceLinkProducerService(
 ) {
     private val logger = LoggerFactory.getLogger(ServiceLinkProducerService::class.java)
 
-    suspend fun processDataset(inputBucket: String, objectName: String): Int {
-        logger.info("Processing dataset: gs://$inputBucket/$objectName")
+    suspend fun processDataset(inputBucket: String, objectName: String, modesFilter: Set<String>? = null): Int {
+        logger.info("Processing dataset: gs://$inputBucket/$objectName, modesFilter=$modesFilter")
 
         val data = gcsService.downloadFile(inputBucket, objectName)
 
         val isZip = data.size >= 4 && data[0] == 0x50.toByte() && data[1] == 0x4B.toByte()
                 && data[2] == 0x03.toByte() && data[3] == 0x04.toByte()
 
+        if (modesFilter != null && modesFilter.isEmpty()) {
+            logger.info("ServiceLinkModes is empty — skipping service link generation for $objectName")
+            gcsService.uploadFile(data, outputBucket, objectName, if (isZip) "application/zip" else "application/xml")
+            return 0
+        }
+
         val (processedData, totalAdded) = if (isZip || objectName.endsWith(".zip", ignoreCase = true)) {
-            processZipArchive(data)
+            processZipArchive(data, modesFilter)
         } else {
-            processSingleXml(data)
+            processSingleXml(data, modesFilter)
         }
 
         gcsService.uploadFile(
@@ -48,7 +54,7 @@ class ServiceLinkProducerService(
 
     suspend fun processZipDirectly(zipData: ByteArray): Pair<ByteArray, Int> = processZipArchive(zipData)
 
-    private suspend fun processZipArchive(zipData: ByteArray): Pair<ByteArray, Int> {
+    private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null): Pair<ByteArray, Int> {
         // First pass: collect stop points and stop assignments (lightweight — only keeps extracted data, not raw XML)
         val allStopPoints = mutableMapOf<String, StopPoint>()
         val allStopAssignments = mutableMapOf<String, String>()
@@ -93,7 +99,8 @@ class ServiceLinkProducerService(
                         logger.info("Processing XML entry: ${entry.name}")
                         val (processedXml, addedCount) = netexProcessor.processNetexFile(
                             ByteArrayInputStream(entryData),
-                            enrichedStopPoints
+                            enrichedStopPoints,
+                            modesFilter
                         )
                         totalAdded += addedCount
 
@@ -112,9 +119,9 @@ class ServiceLinkProducerService(
         return Pair(outputBuffer.toByteArray(), totalAdded)
     }
 
-    private suspend fun processSingleXml(xmlData: ByteArray): Pair<ByteArray, Int> {
+    private suspend fun processSingleXml(xmlData: ByteArray, modesFilter: Set<String>? = null): Pair<ByteArray, Int> {
         val enrichedStops = extractAndEnrichStops(xmlData)
-        return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData), enrichedStops)
+        return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData), enrichedStops, modesFilter)
     }
 
     suspend fun processXmlContentDirectly(xmlContent: String, filename: String): DirectProcessingResult {

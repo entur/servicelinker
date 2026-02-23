@@ -1,6 +1,7 @@
 package no.entur.servicelinker.service
 
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
@@ -705,6 +706,136 @@ class NetexProcessorTest {
 
         assertEquals(1, addedCount, "Should still produce service link using local coordinates")
     }
+
+    // --- modesFilter tests ---
+
+    @Test
+    fun `null modesFilter generates service links for all stops regardless of mode`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+        val xml = buildTwoStopNetex("bus", "bus")
+        val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), null)
+        assertEquals(1, addedCount, "null filter should not restrict generation")
+    }
+
+    @Test
+    fun `modesFilter matching stop mode generates service link`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+        val xml = buildTwoStopNetex("bus", "bus")
+        val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
+        assertEquals(1, addedCount, "BUS filter should include BUS stops")
+    }
+
+    @Test
+    fun `modesFilter not matching stop mode skips pair`() = runTest {
+        val xml = buildTwoStopNetex("rail", "rail")
+        val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
+        assertEquals(0, addedCount, "BUS filter should skip RAIL stops")
+        coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
+    }
+
+    @Test
+    fun `empty modesFilter skips all pairs without calling OSRM`() = runTest {
+        val xml = buildTwoStopNetex("bus", "bus")
+        val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), emptySet())
+        assertEquals(0, addedCount, "Empty filter should generate no service links")
+        coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
+    }
+
+    @Test
+    fun `modesFilter skips stops whose transportMode is null`() = runTest {
+        // sample-netex.xml stops use VehicleModes (plural), which is not parsed, so mode is null
+        val inputStream = getSampleNetexInputStream()
+        val (_, addedCount) = netexProcessor.processNetexFile(inputStream, emptyMap(), setOf("BUS"))
+        assertEquals(0, addedCount, "Stops with null transport mode should be excluded by a mode filter")
+        coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
+    }
+
+    @Test
+    fun `modesFilter only generates links for matching pairs in mixed-mode journey`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+        // JP: BUS → RAIL → BUS. Pairs: (BUS→RAIL, from=BUS ✓), (RAIL→BUS, from=RAIL ✗)
+        val xml = buildThreeStopNetex("bus", "rail", "bus")
+        val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
+        assertEquals(1, addedCount, "Only the pair whose 'from' stop is BUS should get a service link")
+    }
+
+    /** Two-stop, one-pair journey pattern with explicit TransportMode on each stop. */
+    private fun buildTwoStopNetex(mode1: String, mode2: String) = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+            <dataObjects><CompositeFrame id="TST:CompositeFrame:1" version="1"><frames>
+                <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                    <scheduledStopPoints>
+                        <ScheduledStopPoint id="TST:ScheduledStopPoint:1" version="1">
+                            <Name>Stop A</Name>
+                            <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
+                            <TransportMode>$mode1</TransportMode>
+                        </ScheduledStopPoint>
+                        <ScheduledStopPoint id="TST:ScheduledStopPoint:2" version="1">
+                            <Name>Stop B</Name>
+                            <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
+                            <TransportMode>$mode2</TransportMode>
+                        </ScheduledStopPoint>
+                    </scheduledStopPoints>
+                    <journeyPatterns>
+                        <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                            <pointsInSequence>
+                                <StopPointInJourneyPattern id="TST:SPIJP:1" version="1" order="1">
+                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:1" version="1"/>
+                                </StopPointInJourneyPattern>
+                                <StopPointInJourneyPattern id="TST:SPIJP:2" version="1" order="2">
+                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:2" version="1"/>
+                                </StopPointInJourneyPattern>
+                            </pointsInSequence>
+                        </JourneyPattern>
+                    </journeyPatterns>
+                </ServiceFrame>
+            </frames></CompositeFrame></dataObjects>
+        </PublicationDelivery>
+    """.trimIndent()
+
+    /** Three-stop, two-pair journey pattern with explicit TransportMode on each stop. */
+    private fun buildThreeStopNetex(mode1: String, mode2: String, mode3: String) = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+            <dataObjects><CompositeFrame id="TST:CompositeFrame:1" version="1"><frames>
+                <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                    <scheduledStopPoints>
+                        <ScheduledStopPoint id="TST:ScheduledStopPoint:1" version="1">
+                            <Name>Stop A</Name>
+                            <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
+                            <TransportMode>$mode1</TransportMode>
+                        </ScheduledStopPoint>
+                        <ScheduledStopPoint id="TST:ScheduledStopPoint:2" version="1">
+                            <Name>Stop B</Name>
+                            <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
+                            <TransportMode>$mode2</TransportMode>
+                        </ScheduledStopPoint>
+                        <ScheduledStopPoint id="TST:ScheduledStopPoint:3" version="1">
+                            <Name>Stop C</Name>
+                            <Location><Longitude>11.1740</Longitude><Latitude>60.1450</Latitude></Location>
+                            <TransportMode>$mode3</TransportMode>
+                        </ScheduledStopPoint>
+                    </scheduledStopPoints>
+                    <journeyPatterns>
+                        <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                            <pointsInSequence>
+                                <StopPointInJourneyPattern id="TST:SPIJP:1" version="1" order="1">
+                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:1" version="1"/>
+                                </StopPointInJourneyPattern>
+                                <StopPointInJourneyPattern id="TST:SPIJP:2" version="1" order="2">
+                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:2" version="1"/>
+                                </StopPointInJourneyPattern>
+                                <StopPointInJourneyPattern id="TST:SPIJP:3" version="1" order="3">
+                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:3" version="1"/>
+                                </StopPointInJourneyPattern>
+                            </pointsInSequence>
+                        </JourneyPattern>
+                    </journeyPatterns>
+                </ServiceFrame>
+            </frames></CompositeFrame></dataObjects>
+        </PublicationDelivery>
+    """.trimIndent()
 
     private fun parseXmlFromStream(inputStream: InputStream): Document {
         val factory = DocumentBuilderFactory.newInstance()
