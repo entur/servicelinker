@@ -29,14 +29,14 @@ class PubSubMessageHandler(
         logger.debug("Original message type: {}", message.headers[GcpPubSubHeaders.ORIGINAL_MESSAGE]?.javaClass?.name ?: "null")
         logger.debug("PubSub attributes: {}", attributes)
 
-        val correlationId = attributes["RutebankenCorrelationId"] ?: ""
-        val datasetReferential = attributes["EnturDatasetReferential"] ?: ""
-        val modesFilter: Set<String>? = attributes["ServiceLinkModes"]?.let { value ->
+        val correlationId = attributes[CORRELATION_ID] ?: ""
+        val datasetReferential = attributes[DATASET_REFERENTIAL] ?: ""
+        val modesFilter: Set<String>? = attributes[SERVICE_LINK_MODES_HEADER]?.let { value ->
             if (value.isBlank()) emptySet() else value.split(",").map { it.trim().uppercase() }.toSet()
         }
 
         try {
-            val targetFileHandle = attributes["RutebankenTargetFileHandle"]
+            val targetFileHandle = attributes[TARGET_FILE_HANDLE]
                 ?: throw IllegalArgumentException("Message missing 'RutebankenTargetFileHandle' attribute")
 
             logger.info("Received PubSub message: file=$targetFileHandle, correlationId=$correlationId, referential=$datasetReferential, modesFilter=$modesFilter")
@@ -49,8 +49,8 @@ class PubSubMessageHandler(
                 outboundTopic,
                 "",
                 attributes.toMap() + mapOf(
-                    "LinkingStatus" to "SUCCESS",
-                    "LinkedNetexFilePath" to targetFileHandle,
+                    LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_SUCCEEDED,
+                    LINKED_NETEX_FILE_PATH_HEADER to targetFileHandle,
                     "addedServiceLinksCount" to addedCount.toString()
                 )
             )
@@ -64,8 +64,8 @@ class PubSubMessageHandler(
                     outboundTopic,
                     "",
                     attributes.toMap() + mapOf(
-                        "LinkingStatus" to "FAILED",
-                        "LinkingFailureReason" to (e.message ?: "Unknown error")
+                        LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_FAILED,
+                        LINKING_ERROR_CODE_HEADER to (e.message ?: "Unknown error")
                     )
                 )
             } catch (publishEx: Exception) {
@@ -93,8 +93,20 @@ class PubSubMessageHandler(
         throw lastException ?: RuntimeException("Failed after $MAX_RETRIES attempts")
     }
 
-    companion object {
-        private const val MAX_RETRIES = 3
-        private const val RETRY_DELAY_MS = 2000L
+    private companion object {
+        const val MAX_RETRIES = 3
+        const val RETRY_DELAY_MS = 2000L
+
+        // Matches Constants.java in marduk
+        const val LINKING_NETEX_FILE_STATUS_HEADER: String = "LinkingStatus"
+        const val LINKING_NETEX_FILE_STATUS_SUCCEEDED: String = "SUCCESS"
+        const val LINKING_NETEX_FILE_STATUS_FAILED: String = "FAILED"
+        const val LINKED_NETEX_FILE_PATH_HEADER: String = "LinkedNetexFilePath"
+        const val LINKING_ERROR_CODE_HEADER: String = "LinkingFailureReason"
+        const val SERVICE_LINK_MODES_HEADER: String = "ServiceLinkModes"
+        const val CORRELATION_ID: String = "RutebankenCorrelationId"
+        const val DATASET_REFERENTIAL: String = "EnturDatasetReferential"
+        const val TARGET_FILE_HANDLE: String = "RutebankenTargetFileHandle"
+
     }
 }
