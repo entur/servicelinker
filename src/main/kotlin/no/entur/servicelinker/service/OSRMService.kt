@@ -4,6 +4,8 @@ import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMResponse
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.TransportMode
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import org.slf4j.LoggerFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
@@ -12,15 +14,16 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBody
 import reactor.netty.http.client.HttpClient
 import java.time.Duration
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 @ConfigurationProperties(prefix = "osrm")
 data class OsrmProperties(
     val urls: Map<String, String> = emptyMap(),
     val timeout: Long = 30000,
     val cacheRoutes: Boolean = true,
-    val cacheMaxSize: Int = 40_000
+    val cacheMaxSize: Int = 40_000,
+    val cacheTtlHours: Int = 24
 )
 
 @Service
@@ -30,14 +33,11 @@ class OSRMService(
     private val logger = LoggerFactory.getLogger(OSRMService::class.java)
     private val webClients = ConcurrentHashMap<String, WebClient>()
 
-    // LRU cache: ~2 KB avg per entry (polyline geometry), 40k entries ≈ 80 MB
-    private val routeCache: MutableMap<String, OSRMRoute> = Collections.synchronizedMap(
-        object : LinkedHashMap<String, OSRMRoute>(osrmProperties.cacheMaxSize, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, OSRMRoute>?): Boolean {
-                return size > osrmProperties.cacheMaxSize
-            }
-        }
-    )
+    // LRU cache: ~2 KB avg per entry (polyline geometry), 40k entries ≈ 80 MB; entries expire after 24h
+    private val routeCache: Cache<String, OSRMRoute> = Caffeine.newBuilder()
+        .maximumSize(osrmProperties.cacheMaxSize.toLong())
+        .expireAfterWrite(osrmProperties.cacheTtlHours.toLong(), TimeUnit.HOURS)
+        .build()
 
     private fun getWebClient(baseUrl: String): WebClient {
         return webClients.computeIfAbsent(baseUrl) {
@@ -72,7 +72,7 @@ class OSRMService(
         val cacheKey = if (osrmProperties.cacheRoutes) "$modeKey:${from.longitude},${from.latitude}-${to.longitude},${to.latitude}" else null
 
         cacheKey?.let { key ->
-            routeCache[key]?.let { cachedRoute ->
+            routeCache.getIfPresent(key)?.let { cachedRoute ->
                 logger.debug("Using cached route for $key")
                 return cachedRoute
             }
@@ -96,7 +96,7 @@ class OSRMService(
             val route = response.routes.firstOrNull()
 
             if (route != null && cacheKey != null) {
-                routeCache[cacheKey] = route
+                routeCache.put(cacheKey, route)
                 logger.debug("Cached route for $cacheKey, distance: ${route.distance}m")
             }
 
@@ -108,11 +108,11 @@ class OSRMService(
     }
 
     fun clearCache() {
-        routeCache.clear()
+        routeCache.invalidateAll()
         logger.info("Route cache cleared")
     }
 
-    fun getCacheSize(): Int = routeCache.size
+    fun getCacheSize(): Long = routeCache.estimatedSize()
 
     companion object {
         const val SIMPLIFIED_THRESHOLD_METERS = 30_000.0

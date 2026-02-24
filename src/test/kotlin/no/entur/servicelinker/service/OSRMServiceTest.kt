@@ -170,13 +170,13 @@ class OSRMServiceTest {
         busWireMock.verify(1, getRequestedFor(urlPathMatching("/route/v1/driving/.*")))
         railWireMock.verify(1, getRequestedFor(urlPathMatching("/route/v1/driving/.*")))
 
-        assertEquals(2, cachingService.getCacheSize())
+        assertEquals(2L, cachingService.getCacheSize())
     }
 
     @Test
     fun `should initialize OSRM service with correct cache behavior`() {
-        assertEquals(0, osrmService.getCacheSize())
+        assertEquals(0L, osrmService.getCacheSize())
         osrmService.clearCache()
-        assertEquals(0, osrmService.getCacheSize())
+        assertEquals(0L, osrmService.getCacheSize())
     }
 }

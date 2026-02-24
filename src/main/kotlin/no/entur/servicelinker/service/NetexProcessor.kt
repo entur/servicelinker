@@ -78,7 +78,7 @@ class NetexProcessor(
                 null
             }
             if (route != null && route.distance > MAX_ROUTE_DISTANCE_METERS) {
-                logger.info("Skipping pair ${pair.from.id} → ${pair.to.id}: route distance ${route.distance}m exceeds max")
+                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: route distance ${route.distance}m exceeds max")
                 continue
             }
             val serviceLinkElement = createServiceLinkElement(document, pair, route)

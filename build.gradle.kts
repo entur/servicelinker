@@ -49,6 +49,8 @@ dependencies {
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-xml")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
+    implementation("com.github.ben-manes.caffeine:caffeine")
+
     implementation("org.springframework.integration:spring-integration-core")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")

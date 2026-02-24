@@ -150,7 +150,7 @@ class NsrServiceTest {
 
         // Should only have made one HTTP request
         wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A102403")))
-        assertEquals(1, cachingService.getCacheSize())
+        assertEquals(1L, cachingService.getCacheSize())
     }
 
     @Test

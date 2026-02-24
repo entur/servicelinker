@@ -1,5 +1,7 @@
 package no.entur.servicelinker.service
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import no.entur.servicelinker.model.Coordinate
 import org.slf4j.LoggerFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
@@ -11,7 +13,7 @@ import org.w3c.dom.Element
 import reactor.netty.http.client.HttpClient
 import java.io.ByteArrayInputStream
 import java.time.Duration
-import java.util.Collections
+import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
 
 @ConfigurationProperties(prefix = "nsr")
@@ -19,7 +21,8 @@ data class NsrProperties(
     val baseUrl: String = "https://api.entur.io/stop-places/v1/read",
     val timeout: Long = 10000,
     val cacheCoordinates: Boolean = true,
-    val cacheMaxSize: Int = 50_000
+    val cacheMaxSize: Int = 50_000,
+    val cacheTtlHours: Int = 24
 )
 
 @Service
@@ -28,14 +31,11 @@ class NsrService(
 ) {
     private val logger = LoggerFactory.getLogger(NsrService::class.java)
 
-    // LRU cache: ~300 bytes per entry, 50k entries ≈ 15 MB
-    private val coordinateCache: MutableMap<String, Coordinate> = Collections.synchronizedMap(
-        object : LinkedHashMap<String, Coordinate>(nsrProperties.cacheMaxSize, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Coordinate>?): Boolean {
-                return size > nsrProperties.cacheMaxSize
-            }
-        }
-    )
+    // LRU cache: ~300 bytes per entry, 50k entries ≈ 15 MB; entries expire after 24h
+    private val coordinateCache: Cache<String, Coordinate> = Caffeine.newBuilder()
+        .maximumSize(nsrProperties.cacheMaxSize.toLong())
+        .expireAfterWrite(nsrProperties.cacheTtlHours.toLong(), TimeUnit.HOURS)
+        .build()
 
     private val webClient: WebClient by lazy {
         WebClient.builder()
@@ -55,7 +55,7 @@ class NsrService(
 
     suspend fun getQuayCoordinates(quayId: String): Coordinate? {
         if (nsrProperties.cacheCoordinates) {
-            coordinateCache[quayId]?.let { cached ->
+            coordinateCache.getIfPresent(quayId)?.let { cached ->
                 logger.debug("Using cached coordinates for {}", quayId)
                 return cached
             }
@@ -72,7 +72,7 @@ class NsrService(
             val coordinate = parseCoordinateFromXml(responseBody)
 
             if (coordinate != null && nsrProperties.cacheCoordinates) {
-                coordinateCache[quayId] = coordinate
+                coordinateCache.put(quayId, coordinate)
                 logger.debug("Cached coordinates for {}: {}", quayId, coordinate)
             }
 
@@ -112,5 +112,5 @@ class NsrService(
         } else null
     }
 
-    fun getCacheSize(): Int = coordinateCache.size
+    fun getCacheSize(): Long = coordinateCache.estimatedSize()
 }
