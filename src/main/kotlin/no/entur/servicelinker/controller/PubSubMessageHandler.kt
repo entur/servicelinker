@@ -49,7 +49,7 @@ class PubSubMessageHandler(
                 outboundTopic,
                 "",
                 attributes.toMap() + mapOf(
-                    "Status" to "SUCCESS",
+                    "LinkingStatus" to "SUCCESS",
                     "LinkedNetexFilePath" to targetFileHandle,
                     "addedServiceLinksCount" to addedCount.toString()
                 )
@@ -64,7 +64,7 @@ class PubSubMessageHandler(
                     outboundTopic,
                     "",
                     attributes.toMap() + mapOf(
-                        "Status" to "FAILED",
+                        "LinkingStatus" to "FAILED",
                         "LinkingFailureReason" to (e.message ?: "Unknown error")
                     )
                 )
