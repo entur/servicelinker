@@ -50,6 +50,7 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
     implementation("com.github.ben-manes.caffeine:caffeine")
+    implementation("net.logstash.logback:logstash-logback-encoder:8.0")
 
     implementation("org.springframework.integration:spring-integration-core")
 

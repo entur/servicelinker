@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- JSON structured logging for deployed environments (dev/tst/prd).
+         Uses "severity" as the level field name so Google Cloud Logging maps
+         log levels to the correct severity in the GCL UI. -->
+    <springProfile name="dev,tst,prd">
+        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <fieldNames>
+                    <level>severity</level>
+                    <levelValue>[ignore]</levelValue>
+                    <version>[ignore]</version>
+                </fieldNames>
+                <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                    <rootCauseFirst>true</rootCauseFirst>
+                    <inlineHash>true</inlineHash>
+                </throwableConverter>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="STDOUT"/>
+        </root>
+    </springProfile>
+
+    <!-- Human-readable logging for local development (no active profile). -->
+    <springProfile name="!(dev,tst,prd)">
+        <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="STDOUT"/>
+        </root>
+    </springProfile>
+
+</configuration>
