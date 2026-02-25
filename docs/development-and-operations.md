@@ -65,6 +65,38 @@ The docker-compose setup includes an init container that creates PubSub topics/s
 | Input bucket | `marduk-exchange` |
 | Output bucket | `servicelinker-exchange` |
 
+### Triggering a full pipeline run locally
+
+A `trigger` profile service automates the manual upload-and-publish steps. Place a NeTEx ZIP in `test-data/` and run:
+
+```bash
+./gradlew bootJar && docker-compose up --build
+docker compose --profile trigger run --rm trigger
+```
+
+Or point at a specific file:
+
+```bash
+docker compose --profile trigger run --rm \
+  -e NETEX_FILE=/data/Havila_NeTEx_20260219.zip trigger
+```
+
+The trigger uploads the ZIP to `marduk-exchange` in fake-gcs, then publishes a PubSub message to `ServicelinkerInboundQueue` with `RutebankenTargetFileHandle`, a random `correlationId`, and referential `LOCAL`. Watch the output with `docker compose logs -f servicelinker`.
+
+The processed file is written to `servicelinker-exchange` at the same object path:
+
+```bash
+# List output bucket
+curl -s http://localhost:4443/storage/v1/b/servicelinker-exchange/o | jq '.items[].name'
+
+# Download processed file
+curl -s "http://localhost:4443/storage/v1/b/servicelinker-exchange/o/Havila_NeTEx_20260219.zip?alt=media" \
+  -o processed.zip
+
+# Verify ServiceLinks were added
+unzip -p processed.zip | grep -c "ServiceLink"
+```
+
 ### Running the app directly (outside Docker)
 
 For faster iteration you can run the app directly with emulators running in Docker:
@@ -215,10 +247,10 @@ development), no profile is active and the defaults in `application.properties` 
 
 | `COMMON_ENV` | Profile file | GCP project | OSRM | Logging |
 |--------------|-------------|-------------|------|---------|
-| (unset) | `application.properties` | `local-project` | Public OSRM | DEBUG |
-| `dev` | `application-dev.properties` | `ent-servicelnk-dev` | Internal OSRM | DEBUG |
-| `tst` | `application-tst.properties` | `ent-servicelnk-tst` | Internal OSRM | DEBUG |
-| `prd` | `application-prd.properties` | `ent-servicelnk-prd` | Internal OSRM | INFO |
+| (unset) | `application.properties` | `local-project` | Public OSRM | plain text, DEBUG |
+| `dev` | `application-dev.properties` | `ent-servicelnk-dev` | Internal OSRM | JSON (GCL), DEBUG |
+| `tst` | `application-tst.properties` | `ent-servicelnk-tst` | Internal OSRM | JSON (GCL), DEBUG |
+| `prd` | `application-prd.properties` | `ent-servicelnk-prd` | Internal OSRM | JSON (GCL), INFO |
 
 ### Shared defaults (application.properties)
 
@@ -354,16 +386,16 @@ docker build -t servicelinker .
 2. **docker-build** — builds Docker image via `entur/gha-docker`
 3. **docker-push** — pushes image to registry (skipped on PRs)
 4. **scan** — security scan via `entur/gha-security`
-5. **deploy** — deploys to dev via Helm (`helm/servicelinker`) using `entur/gha-helm`
+5. **deploy-dev → deploy-tst → deploy-prd** — sequential Helm deploys to all three environments (main branch only, using `helm/servicelinker`)
 
 Environment-specific config is handled by Spring profiles activated via `COMMON_ENV` (set in the Helm chart values per environment).
 
 **Terraform** — Changes to `terraform/**` trigger `.github/workflows/terraform.yml` via `entur/gha-terraform@v2`:
 
 - **On PRs:** lint (fmt, tflint, validate) + plan for dev
-- **On push to main:** lint + plan + apply for dev
+- **On push to main:** lint + plan + apply for dev → tst → prd
 
-Terraform state is stored in `gs://ent-gcs-tfa-servicelinker`. Per-environment config is in `terraform/env/{dev,tst,prd}.tfvars`.
+Terraform state is stored in `gs://ent-gcs-tfa-servicelinker` (platform-managed bucket, workspaces per environment). Per-environment config is in `terraform/env/{dev,tst,prd}.tfvars`. Each environment's GHA service account (`gh-servicelinker-5cdd-{env}@ent-github-shr.iam.gserviceaccount.com`) requires `roles/storage.objectAdmin` on this bucket.
 
 ### IAM setup
 
