@@ -28,7 +28,8 @@ class NetexProcessor(
     suspend fun processNetexFile(
         inputStream: InputStream,
         externalStopPoints: Map<String, StopPoint> = emptyMap(),
-        modesFilter: Set<String>? = null
+        modesFilter: Set<String>? = null,
+        limit: Int? = null
     ): Pair<ByteArray, Int> {
         logger.info("Starting NeTEx file processing")
         @Suppress("BlockingMethodInNonBlockingContext") // Always a ByteArrayInputStream in practice
@@ -90,6 +91,10 @@ class NetexProcessor(
             allServiceLinks[pairKey] = serviceLinkElement.getAttribute("id")
             newServiceLinkElements.add(pairKey to serviceLinkElement)
             addedCount++
+            if (limit != null && addedCount >= limit) {
+                logger.info("Reached ServiceLink limit ($limit), stopping early")
+                break
+            }
         }
 
         if (addedCount == 0) {

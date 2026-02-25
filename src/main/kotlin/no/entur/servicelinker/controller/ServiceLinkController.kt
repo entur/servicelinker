@@ -18,11 +18,12 @@ class ServiceLinkController(
     suspend fun processXmlFile(
         @RequestBody xmlContent: String,
         @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.xml",
-        @RequestParam(required = false) modes: String? = null
+        @RequestParam(required = false) modes: String? = null,
+        @RequestParam(required = false) limit: Int? = null
     ): ResponseEntity<String> {
-        logger.info("Manual XML processing request for file: $filename, modes: $modes")
+        logger.info("Manual XML processing request for file: $filename, modes: $modes, limit: $limit")
 
-        val result = serviceLinkProducerService.processXmlContentDirectly(xmlContent, filename, parseModes(modes))
+        val result = serviceLinkProducerService.processXmlContentDirectly(xmlContent, filename, parseModes(modes), limit)
 
         return if (result.success) {
             ResponseEntity.ok()
@@ -38,12 +39,13 @@ class ServiceLinkController(
     suspend fun processZipFile(
         @RequestBody zipData: ByteArray,
         @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.zip",
-        @RequestParam(required = false) modes: String? = null
+        @RequestParam(required = false) modes: String? = null,
+        @RequestParam(required = false) limit: Int? = null
     ): ResponseEntity<ByteArray> {
-        logger.info("Manual ZIP processing request for file: $filename, modes: $modes")
+        logger.info("Manual ZIP processing request for file: $filename, modes: $modes, limit: $limit")
 
         return try {
-            val (processedZip, addedCount) = serviceLinkProducerService.processZipDirectly(zipData, parseModes(modes))
+            val (processedZip, addedCount) = serviceLinkProducerService.processZipDirectly(zipData, parseModes(modes), limit)
             logger.info("Successfully processed ZIP. Added $addedCount ServiceLinks for file: $filename")
             ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"processed_$filename\"")

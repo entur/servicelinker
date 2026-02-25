@@ -52,9 +52,9 @@ class ServiceLinkProducerService(
         return totalAdded
     }
 
-    suspend fun processZipDirectly(zipData: ByteArray, modesFilter: Set<String>? = null): Pair<ByteArray, Int> = processZipArchive(zipData, modesFilter)
+    suspend fun processZipDirectly(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> = processZipArchive(zipData, modesFilter, limit)
 
-    private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null): Pair<ByteArray, Int> {
+    private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> {
         // First pass: collect stop points and stop assignments (lightweight — only keeps extracted data, not raw XML)
         val allStopPoints = mutableMapOf<String, StopPoint>()
         val allStopAssignments = mutableMapOf<String, String>()
@@ -88,6 +88,7 @@ class ServiceLinkProducerService(
         // Second pass: re-read ZIP from original bytes, process each entry with enriched stop map
         val outputBuffer = ByteArrayOutputStream()
         var totalAdded = 0
+        var remaining = limit
 
         ZipInputStream(ByteArrayInputStream(zipData)).use { zis ->
             ZipOutputStream(outputBuffer).use { zos ->
@@ -100,9 +101,11 @@ class ServiceLinkProducerService(
                         val (processedXml, addedCount) = netexProcessor.processNetexFile(
                             ByteArrayInputStream(entryData),
                             enrichedStopPoints,
-                            modesFilter
+                            modesFilter,
+                            remaining
                         )
                         totalAdded += addedCount
+                        if (remaining != null) remaining = (remaining!! - addedCount).coerceAtLeast(0)
 
                         zos.putNextEntry(ZipEntry(entry.name))
                         zos.write(processedXml)
@@ -119,12 +122,12 @@ class ServiceLinkProducerService(
         return Pair(outputBuffer.toByteArray(), totalAdded)
     }
 
-    private suspend fun processSingleXml(xmlData: ByteArray, modesFilter: Set<String>? = null): Pair<ByteArray, Int> {
+    private suspend fun processSingleXml(xmlData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> {
         val enrichedStops = extractAndEnrichStops(xmlData)
-        return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData), enrichedStops, modesFilter)
+        return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData), enrichedStops, modesFilter, limit)
     }
 
-    suspend fun processXmlContentDirectly(xmlContent: String, filename: String, modesFilter: Set<String>? = null): DirectProcessingResult {
+    suspend fun processXmlContentDirectly(xmlContent: String, filename: String, modesFilter: Set<String>? = null, limit: Int? = null): DirectProcessingResult {
         return try {
             logger.info("Starting direct ServiceLink production for XML content: $filename")
             val xmlData = xmlContent.toByteArray(Charsets.UTF_8)
@@ -132,7 +135,8 @@ class ServiceLinkProducerService(
             val (processedXml, addedCount) = netexProcessor.processNetexFile(
                 ByteArrayInputStream(xmlData),
                 enrichedStops,
-                modesFilter
+                modesFilter,
+                limit
             )
             logger.info("Successfully processed XML content. Added $addedCount ServiceLinks for file: $filename")
             DirectProcessingResult(
