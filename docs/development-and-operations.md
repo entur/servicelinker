@@ -105,6 +105,32 @@ curl -s "http://localhost:4443/storage/v1/b/servicelinker-exchange/o/Havila_NeTE
 unzip -p processed.zip | grep -c "ServiceLink"
 ```
 
+### Using k8s OSRM instances locally
+
+By default, docker-compose and `bootRun` use the public OSRM (`router.project-osrm.org`), which only does car routing and produces inland routes for ferry/water services. Use the port-forward script to route traffic to the real k8s OSRM instances instead:
+
+```bash
+# Terminal 1 — forwards k8s OSRM services to localhost, writes .env, cleans up on Ctrl+C
+./scripts/port-forward-osrm.sh          # defaults to dev context
+./scripts/port-forward-osrm.sh tst      # use tst context
+
+# Terminal 2 — docker-compose and bootRun both pick up .env automatically
+docker compose up
+# or
+./gradlew bootRun
+```
+
+Port assignments written to `.env`:
+
+| localhost port | k8s service | Modes |
+|----------------|-------------|-------|
+| 5001 | `osrm-bus` | BUS, COACH |
+| 5002 | `osrm-rail` | RAIL, TRAM, METRO |
+| 5003 | `osrm-water` | WATER, FERRY (no separate ferry service exists) |
+| 5004 | `osrm-car` | default/fallback |
+
+`.env` is gitignored and deleted automatically when the script exits (Ctrl+C).
+
 ### Running the app directly (outside Docker)
 
 For faster iteration you can run the app directly with emulators running in Docker:
@@ -314,6 +340,8 @@ base defaults (public OSRM) are overridden per environment profile with internal
 | `osrm.urls.water` | WATER |
 | `osrm.urls.default` | Fallback for unknown modes |
 
+Note: there is no dedicated `osrm-ferry` k8s service — `osrm.urls.ferry` is configured to share `osrm-water` in the port-forward setup.
+
 ### Emulator configuration
 
 For local development (docker-compose or running directly), these environment variables activate emulator mode:
@@ -500,9 +528,6 @@ kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
 
 kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
   "http://osrm-rail.dev.entur.internal/route/v1/driving/10.75,59.91;11.05,59.96?overview=false"
-
-kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
-  "http://osrm-ferry.dev.entur.internal/route/v1/driving/10.75,59.91;11.05,59.96?overview=false"
 
 kubectl exec -it deploy/servicelinker -n servicelinker -- wget -qO- \
   "http://osrm-water.dev.entur.internal/route/v1/driving/10.75,59.91;11.05,59.96?overview=false"

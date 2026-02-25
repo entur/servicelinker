@@ -39,6 +39,9 @@ curl -X POST http://localhost:8080/api/servicelink/process-xml \
 
 # Visualize ServiceLinks from a processed NeTEx file or ZIP
 scripts/view-servicelinks.mjs processed.zip
+
+# Use real k8s OSRM instances instead of public OSRM (for correct water/ferry routing)
+./scripts/port-forward-osrm.sh          # writes .env, picked up by docker-compose and bootRun
 ```
 
 ## Configuration

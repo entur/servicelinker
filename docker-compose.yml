@@ -51,9 +51,18 @@ services:
         condition: service_completed_successfully
     ports:
       - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Linux; no-op on macOS
     environment:
       SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
       STORAGE_EMULATOR_HOST: http://fake-gcs:4443
+      # OSRM URLs — overridden via .env when running scripts/port-forward-osrm.sh
+      OSRM_URLS_BUS: ${OSRM_URLS_BUS:-https://router.project-osrm.org}
+      OSRM_URLS_RAIL: ${OSRM_URLS_RAIL:-https://router.project-osrm.org}
+      OSRM_URLS_FERRY: ${OSRM_URLS_FERRY:-https://router.project-osrm.org}
+      OSRM_URLS_WATER: ${OSRM_URLS_WATER:-https://router.project-osrm.org}
+      OSRM_URLS_DEFAULT: ${OSRM_URLS_DEFAULT:-https://router.project-osrm.org}
+      # Note: no osrm-ferry service — FERRY mode shares osrm-water via port-forward
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/actuator/health"]
       interval: 10s
