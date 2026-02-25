@@ -52,7 +52,7 @@ class ServiceLinkProducerService(
         return totalAdded
     }
 
-    suspend fun processZipDirectly(zipData: ByteArray): Pair<ByteArray, Int> = processZipArchive(zipData)
+    suspend fun processZipDirectly(zipData: ByteArray, modesFilter: Set<String>? = null): Pair<ByteArray, Int> = processZipArchive(zipData, modesFilter)
 
     private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null): Pair<ByteArray, Int> {
         // First pass: collect stop points and stop assignments (lightweight — only keeps extracted data, not raw XML)
@@ -124,14 +124,15 @@ class ServiceLinkProducerService(
         return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData), enrichedStops, modesFilter)
     }
 
-    suspend fun processXmlContentDirectly(xmlContent: String, filename: String): DirectProcessingResult {
+    suspend fun processXmlContentDirectly(xmlContent: String, filename: String, modesFilter: Set<String>? = null): DirectProcessingResult {
         return try {
             logger.info("Starting direct ServiceLink production for XML content: $filename")
             val xmlData = xmlContent.toByteArray(Charsets.UTF_8)
             val enrichedStops = extractAndEnrichStops(xmlData)
             val (processedXml, addedCount) = netexProcessor.processNetexFile(
                 ByteArrayInputStream(xmlData),
-                enrichedStops
+                enrichedStops,
+                modesFilter
             )
             logger.info("Successfully processed XML content. Added $addedCount ServiceLinks for file: $filename")
             DirectProcessingResult(

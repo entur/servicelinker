@@ -17,11 +17,12 @@ class ServiceLinkController(
     @PostMapping("/process-xml", consumes = ["application/xml", "text/xml"], produces = ["application/xml"])
     suspend fun processXmlFile(
         @RequestBody xmlContent: String,
-        @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.xml"
+        @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.xml",
+        @RequestParam(required = false) modes: String? = null
     ): ResponseEntity<String> {
-        logger.info("Manual XML processing request for file: $filename")
+        logger.info("Manual XML processing request for file: $filename, modes: $modes")
 
-        val result = serviceLinkProducerService.processXmlContentDirectly(xmlContent, filename)
+        val result = serviceLinkProducerService.processXmlContentDirectly(xmlContent, filename, parseModes(modes))
 
         return if (result.success) {
             ResponseEntity.ok()
@@ -36,12 +37,13 @@ class ServiceLinkController(
     @PostMapping("/process-zip", consumes = ["application/zip", "application/octet-stream"])
     suspend fun processZipFile(
         @RequestBody zipData: ByteArray,
-        @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.zip"
+        @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.zip",
+        @RequestParam(required = false) modes: String? = null
     ): ResponseEntity<ByteArray> {
-        logger.info("Manual ZIP processing request for file: $filename")
+        logger.info("Manual ZIP processing request for file: $filename, modes: $modes")
 
         return try {
-            val (processedZip, addedCount) = serviceLinkProducerService.processZipDirectly(zipData)
+            val (processedZip, addedCount) = serviceLinkProducerService.processZipDirectly(zipData, parseModes(modes))
             logger.info("Successfully processed ZIP. Added $addedCount ServiceLinks for file: $filename")
             ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"processed_$filename\"")
@@ -52,6 +54,9 @@ class ServiceLinkController(
             ResponseEntity.badRequest().build()
         }
     }
+
+    private fun parseModes(modes: String?): Set<String>? =
+        modes?.takeIf { it.isNotBlank() }?.split(",")?.map { it.trim().uppercase() }?.toSet()
 
     @GetMapping("/cache/stats")
     fun getCacheStatistics(): ResponseEntity<Map<String, Any>> {
