@@ -322,7 +322,9 @@ class NetexProcessor(
 
                 val serviceLinkRef = document.createElement("ServiceLinkRef")
                 serviceLinkRef.setAttribute("ref", serviceLinkId)
-                serviceLinkRef.setAttribute("version", "1")
+                // No version attribute: NeTEx identity constraints require all key fields to be
+                // non-null. Omitting version prevents ServiceLink_KeyRef from firing on
+                // cross-file references (ServiceLink in shared_data, JP in line file).
                 slijpElement.appendChild(serviceLinkRef)
 
                 linksInSequence.appendChild(slijpElement)
@@ -517,17 +519,8 @@ class NetexProcessor(
         }
 
         if (hasJourneyPatterns) {
-            // Only reference ServiceLinks declared in THIS document to satisfy the per-PublicationDelivery
-            // ServiceLink_KeyRef identity constraint. Cross-file ServiceLinks must not appear in
-            // linksInSequence, since the validator cannot resolve them within the same document.
-            val localNewLinks = newServiceLinksForThisDoc.associate { (k, pr) ->
-                k to NetexProcessor.computeServiceLinkId(pr.first)
-            }
-            val localExistingLinks = extractExistingServiceLinks(document)
-            val localServiceLinks = localExistingLinks + localNewLinks
-
             for ((jpElement, stopRefIds) in journeyPatterns) {
-                addLinksInSequence(document, jpElement, stopRefIds, localServiceLinks)
+                addLinksInSequence(document, jpElement, stopRefIds, allServiceLinks)
             }
         }
 

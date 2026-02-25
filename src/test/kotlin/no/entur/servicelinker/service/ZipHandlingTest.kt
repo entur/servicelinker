@@ -260,8 +260,9 @@ class ZipHandlingTest {
             "ServiceLink must be in _shared_data.xml (where ScheduledStopPoints are declared)")
         assertEquals(0, lineServiceLinks,
             "ServiceLink must NOT be in line.xml (ScheduledStopPoint_KeyRef constraint would be violated)")
-        assertEquals(0, lineServiceLinkInJPs,
-            "linksInSequence must NOT reference cross-file ServiceLinks (ServiceLink_KeyRef constraint)")
+        assertEquals(1, lineServiceLinkInJPs,
+            "linksInSequence must be written to the JP file even for cross-file ServiceLinks; " +
+            "omitting version on ServiceLinkRef prevents ServiceLink_KeyRef from firing")
     }
 
     @Test

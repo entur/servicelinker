@@ -54,7 +54,7 @@ function buildStopNames(xmlList) {
 
 function extractFeatures(xml, resolveName) {
   const linkRe = /<ServiceLink[^>]*\bid="([^"]+)"[\s\S]*?<\/ServiceLink>/g;
-  const posRe  = /<gml:posList[^>]*>([\s\S]*?)<\/gml:posList>/;
+  const posRe  = /<\w+:posList[^>]*>([\s\S]*?)<\/\w+:posList>/;
   const fromRe = /<FromPointRef[^>]+ref="([^"]+)"/;
   const toRe   = /<ToPointRef[^>]+ref="([^"]+)"/;
 
