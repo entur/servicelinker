@@ -712,55 +712,100 @@ class NetexProcessorTest {
     @Test
     fun `null modesFilter generates service links for all stops regardless of mode`() = runTest {
         mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
-        val xml = buildTwoStopNetex("bus", "bus")
+        val xml = buildTwoStopNetex("bus")
         val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), null)
         assertEquals(1, addedCount, "null filter should not restrict generation")
     }
 
     @Test
-    fun `modesFilter matching stop mode generates service link`() = runTest {
+    fun `modesFilter matching line mode generates service link`() = runTest {
         mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
-        val xml = buildTwoStopNetex("bus", "bus")
+        val xml = buildTwoStopNetex("bus")
         val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
-        assertEquals(1, addedCount, "BUS filter should include BUS stops")
+        assertEquals(1, addedCount, "BUS filter should include BUS journey pattern")
     }
 
     @Test
-    fun `modesFilter not matching stop mode skips pair`() = runTest {
-        val xml = buildTwoStopNetex("rail", "rail")
+    fun `modesFilter not matching line mode skips pair`() = runTest {
+        val xml = buildTwoStopNetex("rail")
         val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
-        assertEquals(0, addedCount, "BUS filter should skip RAIL stops")
+        assertEquals(0, addedCount, "BUS filter should skip RAIL journey pattern")
         coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
     }
 
     @Test
     fun `empty modesFilter skips all pairs without calling OSRM`() = runTest {
-        val xml = buildTwoStopNetex("bus", "bus")
+        val xml = buildTwoStopNetex("bus")
         val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), emptySet())
         assertEquals(0, addedCount, "Empty filter should generate no service links")
         coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
     }
 
     @Test
-    fun `modesFilter skips stops whose transportMode is null`() = runTest {
-        // sample-netex.xml stops use VehicleModes (plural), which is not parsed, so mode is null
-        val inputStream = getSampleNetexInputStream()
-        val (_, addedCount) = netexProcessor.processNetexFile(inputStream, emptyMap(), setOf("BUS"))
-        assertEquals(0, addedCount, "Stops with null transport mode should be excluded by a mode filter")
+    fun `modesFilter skips journey pattern with no line transport mode`() = runTest {
+        // JP with no RouteRef/LineRef → null mode → excluded by any mode filter
+        val xml = buildTwoStopNetexNoLine()
+        val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
+        assertEquals(0, addedCount, "JP with null transport mode should be excluded by a mode filter")
         coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
     }
 
     @Test
-    fun `modesFilter only generates links for matching pairs in mixed-mode journey`() = runTest {
+    fun `modesFilter generates link when line mode matches, skips other journey patterns`() = runTest {
         mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
-        // JP: BUS → RAIL → BUS. Pairs: (BUS→RAIL, from=BUS ✓), (RAIL→BUS, from=RAIL ✗)
-        val xml = buildThreeStopNetex("bus", "rail", "bus")
+        // JP1: BUS (stops 1→2 ✓), JP2: RAIL (stops 2→3 ✗)
+        val xml = buildTwoJourneyPatternNetex("bus", "rail")
         val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
-        assertEquals(1, addedCount, "Only the pair whose 'from' stop is BUS should get a service link")
+        assertEquals(1, addedCount, "Only the BUS journey pattern should get a service link")
     }
 
-    /** Two-stop, one-pair journey pattern with explicit TransportMode on each stop. */
-    private fun buildTwoStopNetex(mode1: String, mode2: String) = """
+    /** Two-stop, one-pair JP where mode comes from Line via Route. */
+    private fun buildTwoStopNetex(mode: String) = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+            <dataObjects><CompositeFrame id="TST:CompositeFrame:1" version="1"><frames>
+                <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                    <lines>
+                        <Line id="TST:Line:1" version="1">
+                            <Name>Test Line</Name>
+                            <TransportMode>$mode</TransportMode>
+                        </Line>
+                    </lines>
+                    <routes>
+                        <Route id="TST:Route:1" version="1">
+                            <LineRef ref="TST:Line:1" version="1"/>
+                        </Route>
+                    </routes>
+                    <scheduledStopPoints>
+                        <ScheduledStopPoint id="TST:ScheduledStopPoint:1" version="1">
+                            <Name>Stop A</Name>
+                            <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
+                        </ScheduledStopPoint>
+                        <ScheduledStopPoint id="TST:ScheduledStopPoint:2" version="1">
+                            <Name>Stop B</Name>
+                            <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
+                        </ScheduledStopPoint>
+                    </scheduledStopPoints>
+                    <journeyPatterns>
+                        <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                            <RouteRef ref="TST:Route:1" version="1"/>
+                            <pointsInSequence>
+                                <StopPointInJourneyPattern id="TST:SPIJP:1" version="1" order="1">
+                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:1" version="1"/>
+                                </StopPointInJourneyPattern>
+                                <StopPointInJourneyPattern id="TST:SPIJP:2" version="1" order="2">
+                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:2" version="1"/>
+                                </StopPointInJourneyPattern>
+                            </pointsInSequence>
+                        </JourneyPattern>
+                    </journeyPatterns>
+                </ServiceFrame>
+            </frames></CompositeFrame></dataObjects>
+        </PublicationDelivery>
+    """.trimIndent()
+
+    /** Two-stop JP with no Line/Route → null transport mode. */
+    private fun buildTwoStopNetexNoLine() = """
         <?xml version="1.0" encoding="UTF-8"?>
         <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
             <dataObjects><CompositeFrame id="TST:CompositeFrame:1" version="1"><frames>
@@ -769,12 +814,10 @@ class NetexProcessorTest {
                         <ScheduledStopPoint id="TST:ScheduledStopPoint:1" version="1">
                             <Name>Stop A</Name>
                             <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
-                            <TransportMode>$mode1</TransportMode>
                         </ScheduledStopPoint>
                         <ScheduledStopPoint id="TST:ScheduledStopPoint:2" version="1">
                             <Name>Stop B</Name>
                             <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
-                            <TransportMode>$mode2</TransportMode>
                         </ScheduledStopPoint>
                     </scheduledStopPoints>
                     <journeyPatterns>
@@ -794,31 +837,37 @@ class NetexProcessorTest {
         </PublicationDelivery>
     """.trimIndent()
 
-    /** Three-stop, two-pair journey pattern with explicit TransportMode on each stop. */
-    private fun buildThreeStopNetex(mode1: String, mode2: String, mode3: String) = """
+    /** Two journey patterns with different modes: JP1 (mode1) stops 1→2, JP2 (mode2) stops 2→3. */
+    private fun buildTwoJourneyPatternNetex(mode1: String, mode2: String) = """
         <?xml version="1.0" encoding="UTF-8"?>
         <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
             <dataObjects><CompositeFrame id="TST:CompositeFrame:1" version="1"><frames>
                 <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                    <lines>
+                        <Line id="TST:Line:1" version="1"><TransportMode>$mode1</TransportMode></Line>
+                        <Line id="TST:Line:2" version="1"><TransportMode>$mode2</TransportMode></Line>
+                    </lines>
+                    <routes>
+                        <Route id="TST:Route:1" version="1"><LineRef ref="TST:Line:1" version="1"/></Route>
+                        <Route id="TST:Route:2" version="1"><LineRef ref="TST:Line:2" version="1"/></Route>
+                    </routes>
                     <scheduledStopPoints>
                         <ScheduledStopPoint id="TST:ScheduledStopPoint:1" version="1">
                             <Name>Stop A</Name>
                             <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
-                            <TransportMode>$mode1</TransportMode>
                         </ScheduledStopPoint>
                         <ScheduledStopPoint id="TST:ScheduledStopPoint:2" version="1">
                             <Name>Stop B</Name>
                             <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
-                            <TransportMode>$mode2</TransportMode>
                         </ScheduledStopPoint>
                         <ScheduledStopPoint id="TST:ScheduledStopPoint:3" version="1">
                             <Name>Stop C</Name>
                             <Location><Longitude>11.1740</Longitude><Latitude>60.1450</Latitude></Location>
-                            <TransportMode>$mode3</TransportMode>
                         </ScheduledStopPoint>
                     </scheduledStopPoints>
                     <journeyPatterns>
                         <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                            <RouteRef ref="TST:Route:1" version="1"/>
                             <pointsInSequence>
                                 <StopPointInJourneyPattern id="TST:SPIJP:1" version="1" order="1">
                                     <ScheduledStopPointRef ref="TST:ScheduledStopPoint:1" version="1"/>
@@ -826,7 +875,15 @@ class NetexProcessorTest {
                                 <StopPointInJourneyPattern id="TST:SPIJP:2" version="1" order="2">
                                     <ScheduledStopPointRef ref="TST:ScheduledStopPoint:2" version="1"/>
                                 </StopPointInJourneyPattern>
-                                <StopPointInJourneyPattern id="TST:SPIJP:3" version="1" order="3">
+                            </pointsInSequence>
+                        </JourneyPattern>
+                        <JourneyPattern id="TST:JourneyPattern:2" version="1">
+                            <RouteRef ref="TST:Route:2" version="1"/>
+                            <pointsInSequence>
+                                <StopPointInJourneyPattern id="TST:SPIJP:3" version="1" order="1">
+                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:2" version="1"/>
+                                </StopPointInJourneyPattern>
+                                <StopPointInJourneyPattern id="TST:SPIJP:4" version="1" order="2">
                                     <ScheduledStopPointRef ref="TST:ScheduledStopPoint:3" version="1"/>
                                 </StopPointInJourneyPattern>
                             </pointsInSequence>

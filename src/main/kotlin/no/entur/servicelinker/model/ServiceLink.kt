@@ -14,5 +14,6 @@ enum class TransportMode {
 
 data class StationPair(
     val from: StopPoint,
-    val to: StopPoint
+    val to: StopPoint,
+    val transportMode: TransportMode? = null
 )

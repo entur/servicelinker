@@ -43,8 +43,10 @@ class NetexProcessor(
         val journeyPatterns = extractJourneyPatterns(document)
 
         // Collect unique consecutive pairs from all JourneyPatterns
+        val jpModeMap = buildJpModeMap(document)
         val neededPairs = mutableMapOf<String, StationPair>()
-        for ((_, stopRefIds) in journeyPatterns) {
+        for ((jpElement, stopRefIds) in journeyPatterns) {
+            val jpMode = jpModeMap[jpElement.getAttribute("id")]
             for (i in 0 until stopRefIds.size - 1) {
                 val fromRef = stopRefIds[i]
                 val toRef = stopRefIds[i + 1]
@@ -53,7 +55,7 @@ class NetexProcessor(
                     val from = stopPointsMap[fromRef]
                     val to = stopPointsMap[toRef]
                     if (from != null && to != null) {
-                        neededPairs[pairKey] = StationPair(from, to)
+                        neededPairs[pairKey] = StationPair(from, to, jpMode)
                     }
                 }
             }
@@ -67,12 +69,12 @@ class NetexProcessor(
         // Build new ServiceLink elements, but only touch the document if we actually add any
         val newServiceLinkElements = mutableListOf<Pair<String, Element>>()
         for ((pairKey, pair) in neededPairs) {
-            if (modesFilter != null && !modesFilter.contains(pair.from.transportMode?.name)) {
-                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: mode ${pair.from.transportMode} not in filter $modesFilter")
+            if (modesFilter != null && !modesFilter.contains(pair.transportMode?.name)) {
+                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: mode ${pair.transportMode} not in filter $modesFilter")
                 continue
             }
             val route = try {
-                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.from.transportMode)
+                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.transportMode)
             } catch (_: Exception) {
                 logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
                 null
@@ -392,6 +394,45 @@ class NetexProcessor(
         serviceLinkElement.appendChild(toPointRef)
 
         return serviceLinkElement
+    }
+
+    private fun buildJpModeMap(document: Document): Map<String, TransportMode?> {
+        // lineId → TransportMode
+        val lineModes = mutableMapOf<String, TransportMode>()
+        val lines = document.getElementsByTagName("Line")
+        for (i in 0 until lines.length) {
+            val line = lines.item(i) as Element
+            val mode = extractTransportMode(line)
+            if (mode != null) lineModes[line.getAttribute("id")] = mode
+        }
+
+        // routeId → lineId
+        val routeToLine = mutableMapOf<String, String>()
+        val routes = document.getElementsByTagName("Route")
+        for (i in 0 until routes.length) {
+            val route = routes.item(i) as Element
+            val lineRef = (route.getElementsByTagName("LineRef").item(0) as? Element)?.getAttribute("ref")
+            if (lineRef != null) routeToLine[route.getAttribute("id")] = lineRef
+        }
+
+        // jpId → TransportMode, resolved via: direct TransportMode > LineRef > RouteRef → Route → LineRef
+        val result = mutableMapOf<String, TransportMode?>()
+        val jps = document.getElementsByTagName("JourneyPattern")
+        for (i in 0 until jps.length) {
+            val jp = jps.item(i) as Element
+            val jpId = jp.getAttribute("id")
+
+            val directMode = extractTransportMode(jp)
+            if (directMode != null) { result[jpId] = directMode; continue }
+
+            val lineRef = (jp.getElementsByTagName("LineRef").item(0) as? Element)?.getAttribute("ref")
+            if (lineRef != null) { result[jpId] = lineModes[lineRef]; continue }
+
+            val routeRef = (jp.getElementsByTagName("RouteRef").item(0) as? Element)?.getAttribute("ref")
+            val lineId = if (routeRef != null) routeToLine[routeRef] else null
+            result[jpId] = if (lineId != null) lineModes[lineId] else null
+        }
+        return result
     }
 
     private fun ensureGmlNamespace(document: Document) {
