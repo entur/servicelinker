@@ -80,7 +80,13 @@ class ServiceLinkProducerService(
                         val assignments = netexProcessor.extractStopAssignments(document)
                         allStopPoints.putAll(stops)
                         allStopAssignments.putAll(assignments)
-                        stops.keys.forEach { stopDeclarationFile[it] = entry.name }
+                        // Record ALL declared ScheduledStopPoint IDs (not just those with inline
+                        // coordinates) so ServiceLinks are routed to the correct file even when
+                        // coordinates come from NSR enrichment.
+                        val declaredIds = netexProcessor.extractScheduledStopPointIds(document)
+                        logger.debug("Pass 1 {}: {} ScheduledStopPoint IDs declared, {} with inline coords",
+                            entry.name, declaredIds.size, stops.size)
+                        declaredIds.forEach { stopDeclarationFile[it] = entry.name }
                         existingServiceLinksGlobal.putAll(netexProcessor.extractExistingServiceLinks(document))
                         netexProcessor.collectJpPairRefs(document).forEach { (k, v) -> rawPairRefs.putIfAbsent(k, v) }
                     } catch (e: Exception) {

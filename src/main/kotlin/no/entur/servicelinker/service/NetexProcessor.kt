@@ -434,6 +434,18 @@ class NetexProcessor(
 
     // --- Public helpers for multi-file ZIP processing ---
 
+    /** Return all ScheduledStopPoint IDs declared in the document, regardless of whether they
+     *  have inline coordinates. Used to populate the stopDeclarationFile map in ZIP processing. */
+    fun extractScheduledStopPointIds(document: Document): Set<String> {
+        val ids = mutableSetOf<String>()
+        val elements = document.getElementsByTagName("ScheduledStopPoint")
+        for (i in 0 until elements.length) {
+            val id = (elements.item(i) as Element).getAttribute("id")
+            if (id.isNotBlank()) ids.add(id)
+        }
+        return ids
+    }
+
     /** Collect raw JP pair refs (stop IDs + transport mode) without requiring enriched coordinates.
      *  Used by the ZIP planning pass so stop-collection and JP-scanning can share one ZIP read. */
     fun collectJpPairRefs(document: Document): Map<String, Triple<String, String, TransportMode?>> {
@@ -505,8 +517,17 @@ class NetexProcessor(
         }
 
         if (hasJourneyPatterns) {
+            // Only reference ServiceLinks declared in THIS document to satisfy the per-PublicationDelivery
+            // ServiceLink_KeyRef identity constraint. Cross-file ServiceLinks must not appear in
+            // linksInSequence, since the validator cannot resolve them within the same document.
+            val localNewLinks = newServiceLinksForThisDoc.associate { (k, pr) ->
+                k to NetexProcessor.computeServiceLinkId(pr.first)
+            }
+            val localExistingLinks = extractExistingServiceLinks(document)
+            val localServiceLinks = localExistingLinks + localNewLinks
+
             for ((jpElement, stopRefIds) in journeyPatterns) {
-                addLinksInSequence(document, jpElement, stopRefIds, allServiceLinks)
+                addLinksInSequence(document, jpElement, stopRefIds, localServiceLinks)
             }
         }
 

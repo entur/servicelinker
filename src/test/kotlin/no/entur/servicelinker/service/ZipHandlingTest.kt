@@ -16,7 +16,9 @@ import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ZipHandlingTest {
@@ -140,6 +142,126 @@ class ZipHandlingTest {
         assertNotNull(uploadedData, "Original data should still be uploaded")
         assertEquals(testZip.size, requireNotNull(uploadedData).size, "Uploaded data should be the original unmodified ZIP")
         coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
+    }
+
+    /**
+     * Regression test for: ServiceLinks written to line file instead of shared data file
+     * when ScheduledStopPoint elements have no inline coordinates (coordinates resolved via NSR).
+     *
+     * The NeTEx identity constraint ScheduledStopPoint_KeyRef requires that every
+     * FromPointRef/ToPointRef in a ServiceLink resolves to a ScheduledStopPoint in the
+     * same PublicationDelivery. When stops are declared in _shared_data.xml without
+     * coordinates, and NSR enrichment is used, the stopDeclarationFile map must still
+     * correctly point to _shared_data.xml so ServiceLinks are written there.
+     */
+    @Test
+    fun `ServiceLinks should be written to the file that declares the ScheduledStopPoints even when coordinates come from NSR`() = runTest {
+        val sharedDataXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+              <dataObjects>
+                <CompositeFrame id="TST:CompositeFrame:1" version="1">
+                  <frames>
+                    <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                      <scheduledStopPoints>
+                        <ScheduledStopPoint version="1" id="TST:ScheduledStopPoint:A">
+                          <Name>Stop A</Name>
+                        </ScheduledStopPoint>
+                        <ScheduledStopPoint version="1" id="TST:ScheduledStopPoint:B">
+                          <Name>Stop B</Name>
+                        </ScheduledStopPoint>
+                      </scheduledStopPoints>
+                      <stopAssignments>
+                        <PassengerStopAssignment version="1" id="TST:PassengerStopAssignment:A" order="1">
+                          <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="1"/>
+                          <QuayRef ref="NSR:Quay:1" version="1"/>
+                        </PassengerStopAssignment>
+                        <PassengerStopAssignment version="1" id="TST:PassengerStopAssignment:B" order="2">
+                          <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="1"/>
+                          <QuayRef ref="NSR:Quay:2" version="1"/>
+                        </PassengerStopAssignment>
+                      </stopAssignments>
+                    </ServiceFrame>
+                  </frames>
+                </CompositeFrame>
+              </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent().toByteArray()
+
+        val lineXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+              <dataObjects>
+                <CompositeFrame id="TST:CompositeFrame:2" version="1">
+                  <frames>
+                    <ServiceFrame id="TST:ServiceFrame:2" version="1">
+                      <journeyPatterns>
+                        <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                          <pointsInSequence>
+                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:1" version="1" order="1">
+                              <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="1"/>
+                            </StopPointInJourneyPattern>
+                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:2" version="1" order="2">
+                              <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="1"/>
+                            </StopPointInJourneyPattern>
+                          </pointsInSequence>
+                        </JourneyPattern>
+                      </journeyPatterns>
+                    </ServiceFrame>
+                  </frames>
+                </CompositeFrame>
+              </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent().toByteArray()
+
+        // NSR enrichment returns coordinates for stops that have no inline coordinates
+        coEvery { mockNsrService.getQuayCoordinates("NSR:Quay:1") } returns oslo
+        coEvery { mockNsrService.getQuayCoordinates("NSR:Quay:2") } returns lillestrøm
+
+        // Line file is first — matches real-world ordering (e.g. Havila ZIP).
+        // The fallback `firstXmlFile` would be "line.xml", so if stopDeclarationFile
+        // is not populated correctly the ServiceLinks would end up in the wrong file.
+        val zipData = ByteArrayOutputStream().also { buf ->
+            ZipOutputStream(buf).use { zos ->
+                zos.putNextEntry(ZipEntry("line.xml"))
+                zos.write(lineXml)
+                zos.closeEntry()
+                zos.putNextEntry(ZipEntry("_shared_data.xml"))
+                zos.write(sharedDataXml)
+                zos.closeEntry()
+            }
+        }.toByteArray()
+
+        val (processedZip, addedCount) = serviceLinkProducerService.processZipDirectly(zipData)
+
+        assertEquals(1, addedCount, "Should have created exactly one ServiceLink")
+
+        // Extract each file from the output ZIP and check ServiceLink placement
+        val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val outputFiles = mutableMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(processedZip)).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                outputFiles[entry.name] = zis.readBytes()
+                entry = zis.nextEntry
+            }
+        }
+
+        fun countElements(xml: ByteArray, tagName: String): Int {
+            val doc = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml))
+            return doc.getElementsByTagName(tagName).length
+        }
+
+        val sharedDataServiceLinks = countElements(outputFiles["_shared_data.xml"]!!, "ServiceLink")
+        val lineServiceLinks = countElements(outputFiles["line.xml"]!!, "ServiceLink")
+        val lineServiceLinkInJPs = countElements(outputFiles["line.xml"]!!, "ServiceLinkInJourneyPattern")
+
+        assertEquals(1, sharedDataServiceLinks,
+            "ServiceLink must be in _shared_data.xml (where ScheduledStopPoints are declared)")
+        assertEquals(0, lineServiceLinks,
+            "ServiceLink must NOT be in line.xml (ScheduledStopPoint_KeyRef constraint would be violated)")
+        assertEquals(0, lineServiceLinkInJPs,
+            "linksInSequence must NOT reference cross-file ServiceLinks (ServiceLink_KeyRef constraint)")
     }
 
     @Test
