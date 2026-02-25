@@ -139,9 +139,7 @@ For faster iteration you can run the app directly with emulators running in Dock
 # Start only the emulators (init creates topics, subscriptions, and buckets)
 docker-compose up pubsub-emulator fake-gcs emulator-init
 
-# Run the app pointing at the emulators
-SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST=localhost:8085 \
-STORAGE_EMULATOR_HOST=http://localhost:4443 \
+# Run the app — emulator URLs are set automatically by the bootRun task
 ./gradlew bootRun
 ```
 
