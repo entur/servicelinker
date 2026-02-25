@@ -2,6 +2,7 @@ package no.entur.servicelinker.service
 
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
+import kotlinx.coroutines.CancellationException
 import no.entur.servicelinker.model.Coordinate
 import org.slf4j.LoggerFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
@@ -77,6 +78,8 @@ class NsrService(
             }
 
             coordinate
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             logger.warn("Failed to get coordinates for quay {}: {}", quayId, e.message)
             null

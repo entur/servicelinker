@@ -1,5 +1,6 @@
 package no.entur.servicelinker.service
 
+import kotlinx.coroutines.CancellationException
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.StationPair
@@ -75,6 +76,8 @@ class NetexProcessor(
             }
             val route = try {
                 osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.transportMode)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
                 null
