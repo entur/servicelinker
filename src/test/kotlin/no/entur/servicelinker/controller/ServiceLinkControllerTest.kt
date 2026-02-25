@@ -34,7 +34,17 @@ class ServiceLinkControllerTest {
     }
 
     @Test
-    fun `process-xml with modes passes uppercase set`() = runTest {
+    fun `process-xml with bracket notation passes uppercase set`() = runTest {
+        coEvery { mockService.processXmlContentDirectly(any(), any(), setOf("BUS", "TRAM")) } returns
+                DirectProcessingResult(true, "<xml/>", 1)
+
+        controller.processXmlFile("<xml/>", "test.xml", "[BUS,TRAM]")
+
+        coVerify { mockService.processXmlContentDirectly("<xml/>", "test.xml", setOf("BUS", "TRAM")) }
+    }
+
+    @Test
+    fun `process-xml with plain comma-separated modes passes uppercase set`() = runTest {
         coEvery { mockService.processXmlContentDirectly(any(), any(), setOf("BUS", "RAIL")) } returns
                 DirectProcessingResult(true, "<xml/>", 1)
 
@@ -44,13 +54,13 @@ class ServiceLinkControllerTest {
     }
 
     @Test
-    fun `process-xml with blank modes passes null filter`() = runTest {
-        coEvery { mockService.processXmlContentDirectly(any(), any(), null) } returns
+    fun `process-xml with empty bracket notation passes empty set (process none)`() = runTest {
+        coEvery { mockService.processXmlContentDirectly(any(), any(), emptySet()) } returns
                 DirectProcessingResult(true, "<xml/>", 0)
 
-        controller.processXmlFile("<xml/>", "test.xml", "  ")
+        controller.processXmlFile("<xml/>", "test.xml", "[]")
 
-        coVerify { mockService.processXmlContentDirectly("<xml/>", "test.xml", null) }
+        coVerify { mockService.processXmlContentDirectly("<xml/>", "test.xml", emptySet()) }
     }
 
     // --- process-zip ---
@@ -66,13 +76,23 @@ class ServiceLinkControllerTest {
     }
 
     @Test
-    fun `process-zip with modes passes uppercase set`() = runTest {
+    fun `process-zip with bracket notation passes uppercase set`() = runTest {
         val zip = byteArrayOf(0x50, 0x4B)
         coEvery { mockService.processZipDirectly(any(), setOf("FERRY")) } returns Pair(zip, 3)
 
-        controller.processZipFile(zip, "test.zip", "ferry")
+        controller.processZipFile(zip, "test.zip", "[ferry]")
 
         coVerify { mockService.processZipDirectly(zip, setOf("FERRY")) }
+    }
+
+    @Test
+    fun `process-zip with empty bracket notation passes empty set (process none)`() = runTest {
+        val zip = byteArrayOf(0x50, 0x4B)
+        coEvery { mockService.processZipDirectly(any(), emptySet()) } returns Pair(zip, 0)
+
+        controller.processZipFile(zip, "test.zip", "[]")
+
+        coVerify { mockService.processZipDirectly(zip, emptySet()) }
     }
 
     @Test

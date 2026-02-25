@@ -55,8 +55,14 @@ class ServiceLinkController(
         }
     }
 
-    private fun parseModes(modes: String?): Set<String>? =
-        modes?.takeIf { it.isNotBlank() }?.split(",")?.map { it.trim().uppercase() }?.toSet()
+    private fun parseModes(modes: String?): Set<String>? {
+        if (modes == null) return null
+        return modes.trim().removeSurrounding("[", "]")
+            .split(",")
+            .map { it.trim().uppercase() }
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
 
     @GetMapping("/cache/stats")
     fun getCacheStatistics(): ResponseEntity<Map<String, Any>> {

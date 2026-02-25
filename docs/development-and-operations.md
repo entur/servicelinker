@@ -226,6 +226,30 @@ curl -X POST http://localhost:8080/api/servicelink/process-xml \
   --data-binary @src/test/resources/sample-netex.xml \
   -o processed.xml
 
+# Filter to specific transport modes (bracket notation, URL-encoded)
+curl -X POST "http://localhost:8080/api/servicelink/process-xml?modes=%5BBUS%2CTRAM%5D" \
+  -H "Content-Type: application/xml" \
+  --data-binary @src/test/resources/sample-netex.xml \
+  -o processed.xml
+
+# Same for ZIP
+curl -X POST "http://localhost:8080/api/servicelink/process-zip?modes=%5BBUS%2CTRAM%5D" \
+  -H "Content-Type: application/zip" \
+  --data-binary @file.zip \
+  -o processed.zip
+```
+
+The `modes` parameter controls which transport modes are processed:
+
+| Value | Behaviour |
+|-------|-----------|
+| _(absent)_ | process all modes |
+| `[]` | skip processing, return input unchanged |
+| `[BUS,TRAM]` | process only BUS and TRAM |
+
+Values are case-insensitive. Comma-separated without brackets (`BUS,TRAM`) also works.
+
+```bash
 # Cache stats
 curl http://localhost:8080/api/servicelink/cache/stats
 
