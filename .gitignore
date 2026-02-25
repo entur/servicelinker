@@ -44,3 +44,4 @@ out/
 
 ### Docker test artifacts ###
 processed.xml
+/tmp

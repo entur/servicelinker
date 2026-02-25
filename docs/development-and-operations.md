@@ -83,6 +83,14 @@ docker compose --profile trigger run --rm \
 
 The trigger uploads the ZIP to `marduk-exchange` in fake-gcs, then publishes a PubSub message to `ServicelinkerInboundQueue` with `RutebankenTargetFileHandle`, a random `correlationId`, and referential `LOCAL`. Watch the output with `docker compose logs -f servicelinker`.
 
+Visualize the result after processing:
+
+```bash
+curl -s "http://localhost:4443/storage/v1/b/servicelinker-exchange/o/yourfile.zip?alt=media" \
+  -o processed.zip
+scripts/view-servicelinks.mjs processed.zip
+```
+
 The processed file is written to `servicelinker-exchange` at the same object path:
 
 ```bash
@@ -192,6 +200,12 @@ Verify ServiceLinks were added:
 
 ```bash
 grep -c "ServiceLink" processed.xml
+```
+
+Visualize on a map:
+
+```bash
+scripts/view-servicelinks.mjs processed.xml
 ```
 
 **Step 6: Check the status PubSub message.**

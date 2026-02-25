@@ -36,6 +36,9 @@ docker-compose up --build
 curl -X POST http://localhost:8080/api/servicelink/process-xml \
   -H "Content-Type: application/xml" \
   --data-binary @src/test/resources/sample-netex.xml
+
+# Visualize ServiceLinks from a processed NeTEx file or ZIP
+scripts/view-servicelinks.mjs processed.zip
 ```
 
 ## Configuration

@@ -38,3 +38,4 @@ docker-compose up --build # full local stack with emulators
 - PubSub topics/subscriptions are in Marduk's GCP project (`ent-marduk-*`), subscriptions in Servicelinker's project (`ent-servicelnk-*`)
 - Outbound topic config must use full path (`projects/ent-marduk-{env}/topics/...`) for cross-project publishing
 - CI: GitHub Actions for build/deploy (`.github/workflows/build.yml`) and Terraform (`.github/workflows/terraform.yml`)
+- Always remember to update tests and documentation
