@@ -894,6 +894,45 @@ class NetexProcessorTest {
         </PublicationDelivery>
     """.trimIndent()
 
+    @Test
+    fun `serviceLinks should appear before journeyPatterns in ServiceFrame`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+
+        val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexInputStream())
+        assertEquals(1, addedCount)
+
+        val doc = parseXmlFromBytes(processedXml)
+        val serviceFrame = doc.getElementsByTagName("ServiceFrame").item(0) as Element
+        val children = serviceFrame.childNodes
+        var serviceLinksPos = -1
+        var journeyPatternsPos = -1
+        for (i in 0 until children.length) {
+            val node = children.item(i)
+            if (node is Element) when (node.localName) {
+                "serviceLinks"    -> serviceLinksPos = i
+                "journeyPatterns" -> journeyPatternsPos = i
+            }
+        }
+        assertTrue(serviceLinksPos >= 0, "serviceLinks not found")
+        assertTrue(journeyPatternsPos >= 0, "journeyPatterns not found")
+        assertTrue(serviceLinksPos < journeyPatternsPos,
+            "serviceLinks (pos $serviceLinksPos) must precede journeyPatterns (pos $journeyPatternsPos)")
+    }
+
+    @Test
+    fun `serviceLinks should use GML 3_2 namespace`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+
+        val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexInputStream())
+        assertEquals(1, addedCount)
+
+        val xmlString = String(processedXml, Charsets.UTF_8)
+        assertTrue(xmlString.contains("http://www.opengis.net/gml/3.2"),
+            "Output must declare GML 3.2 namespace")
+        assertFalse(xmlString.contains("xmlns:gml=\"http://www.opengis.net/gml\""),
+            "Output must not use old GML 2/3.1 namespace")
+    }
+
     private fun parseXmlFromStream(inputStream: InputStream): Document {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true

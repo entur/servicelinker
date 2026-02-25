@@ -102,14 +102,23 @@ class NetexProcessor(
             return Pair(inputBytes, 0)
         }
 
-        // Append new ServiceLinks to the document
+        // Insert new ServiceLinks section in the correct schema position (before journeyPatterns etc.)
         var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
         if (serviceLinksSection == null) {
             val serviceFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
                 ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
                 ?: document.documentElement
             serviceLinksSection = document.createElement("serviceLinks")
-            serviceFrame.appendChild(serviceLinksSection)
+            // serviceLinks must precede journeyPatterns and other later elements in the NeTEx schema
+            val insertionPoint = serviceFrame.childNodes.let { nodes ->
+                (0 until nodes.length).asSequence().map { nodes.item(it) }
+                    .firstOrNull { it is Element && it.localName in AFTER_SERVICE_LINKS }
+            }
+            if (insertionPoint != null) {
+                serviceFrame.insertBefore(serviceLinksSection, insertionPoint)
+            } else {
+                serviceFrame.appendChild(serviceLinksSection)
+            }
         }
         for ((_, element) in newServiceLinkElements) {
             serviceLinksSection.appendChild(element)
@@ -376,15 +385,15 @@ class NetexProcessor(
         val linkSequenceProjection = document.createElement("LinkSequenceProjection")
         linkSequenceProjection.setAttribute("id", linkSequenceProjectionId)
         linkSequenceProjection.setAttribute("version", "1")
-        val gmlLineString = document.createElement("gml:LineString")
+        val gmlLineString = document.createElementNS(GML_NS, "gml:LineString")
         gmlLineString.setAttribute("srsName", SRS_NAME_WGS84)
-        gmlLineString.setAttribute("gml:id", "lsp_${fromId}_${toId}")
+        gmlLineString.setAttributeNS(GML_NS, "gml:id", "lsp_${fromId}_${toId}")
         val coordinates = route?.coordinates ?: listOf(
             listOf(pair.from.coordinate.longitude.toDouble(), pair.from.coordinate.latitude.toDouble()),
             listOf(pair.to.coordinate.longitude.toDouble(), pair.to.coordinate.latitude.toDouble())
         )
         val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
-        val posList = document.createElement("gml:posList")
+        val posList = document.createElementNS(GML_NS, "gml:posList")
         posList.textContent = posListString
         gmlLineString.appendChild(posList)
         linkSequenceProjection.appendChild(gmlLineString)
@@ -445,8 +454,9 @@ class NetexProcessor(
 
     private fun ensureGmlNamespace(document: Document) {
         val root = document.documentElement
-        if (!root.hasAttribute("xmlns:gml")) {
-            root.setAttribute("xmlns:gml", "http://www.opengis.net/gml")
+        val existing = root.getAttribute("xmlns:gml")
+        if (existing != GML_NS) {
+            root.setAttribute("xmlns:gml", GML_NS)
         }
     }
 
@@ -486,5 +496,16 @@ class NetexProcessor(
     companion object {
         const val SRS_NAME_WGS84: String = "EPSG:4326"
         const val MAX_ROUTE_DISTANCE_METERS = 5_000_000 // 5000 km — sanity limit
+        const val GML_NS = "http://www.opengis.net/gml/3.2"
+
+        // NeTEx ServiceFrame elements that must appear after <serviceLinks> in schema order
+        val AFTER_SERVICE_LINKS = setOf(
+            "journeyPatterns", "stopAssignments", "connections",
+            "timingPoints", "timingLinks", "tariffZones",
+            "routingConstraintZones", "transferRestrictions", "serviceExclusions",
+            "timeDemandTypes", "timeDemandTypeAssignments", "timingLinkGroups",
+            "notices", "noticeAssignments", "logicalDisplays",
+            "displayAssignments", "passengerInformationEquipments"
+        )
     }
 }
