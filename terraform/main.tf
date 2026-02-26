@@ -1,6 +1,6 @@
 # Contains main description of bulk of terraform?
 terraform {
-  required_version = "1.14.5"
+  required_version = "~> 1.14"
 
   required_providers {
     google = {
