@@ -40,7 +40,7 @@ jobs:
       environment: tst
 
   approval-tst:
-    if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') }}
+    if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') && needs.tf-plan-tst.outputs.has_changes == 'true' }}
     needs: [tf-apply-dev, tf-plan-tst]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -51,6 +51,7 @@ jobs:
         run: echo "Approve TST deployment"
 
   tf-apply-tst:
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     needs: [approval-tst, tf-plan-tst]
     name: Terraform Apply TST
     uses: entur/gha-terraform/.github/workflows/apply.yml@v2
@@ -67,7 +68,7 @@ jobs:
       environment: prd
 
   approval-prd:
-    if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') }}
+    if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') && needs.tf-plan-prd.outputs.has_changes == 'true' }}
     needs: [tf-apply-tst, tf-plan-prd]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -78,6 +79,7 @@ jobs:
         run: echo "Approve PRD deployment"
 
   tf-apply-prd:
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     needs: [approval-prd, tf-plan-prd]
     name: Terraform Apply PRD
     uses: entur/gha-terraform/.github/workflows/apply.yml@v2
