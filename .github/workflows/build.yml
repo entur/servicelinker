@@ -70,9 +70,20 @@ jobs:
       release_name: servicelinker
     secrets: inherit
 
+  approval-tst:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: Approve
+    steps:
+      - name: Manual approval
+        shell: bash
+        run: echo "Approve the deployment"
+
   deploy-tst:
     if: ${{ github.ref == 'refs/heads/main' }}
-    needs: [docker-push, deploy-dev]
+    needs: [docker-push, approval-tst]
     uses: entur/gha-helm/.github/workflows/deploy.yml@v1
     with:
       environment: tst
@@ -82,9 +93,20 @@ jobs:
       release_name: servicelinker
     secrets: inherit
 
+  approval-prd:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: deploy-tst
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: Approve
+    steps:
+      - name: Manual approval
+        shell: bash
+        run: echo "Approve the deployment"
+
   deploy-prd:
     if: ${{ github.ref == 'refs/heads/main' }}
-    needs: [docker-push, deploy-tst]
+    needs: [docker-push, approval-prd]
     uses: entur/gha-helm/.github/workflows/deploy.yml@v1
     with:
       environment: prd
