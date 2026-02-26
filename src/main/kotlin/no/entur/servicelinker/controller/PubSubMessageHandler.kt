@@ -41,6 +41,12 @@ class PubSubMessageHandler(
 
             logger.info("Received PubSub message: file=$targetFileHandle, correlationId=$correlationId, referential=$datasetReferential, modesFilter=$modesFilter")
 
+            pubSubTemplate.publish(
+                outboundTopic,
+                "",
+                attributes.toMap() + mapOf(LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_STARTED)
+            )
+
             val addedCount = processWithRetry(inputBucket, targetFileHandle, modesFilter)
 
             logger.info("Processing complete. Added $addedCount ServiceLinks. Publishing status.")
@@ -99,6 +105,7 @@ class PubSubMessageHandler(
 
         // Matches Constants.java in marduk
         const val LINKING_NETEX_FILE_STATUS_HEADER: String = "LinkingStatus"
+        const val LINKING_NETEX_FILE_STATUS_STARTED: String = "STARTED"
         const val LINKING_NETEX_FILE_STATUS_SUCCEEDED: String = "SUCCESS"
         const val LINKING_NETEX_FILE_STATUS_FAILED: String = "FAILED"
         const val LINKED_NETEX_FILE_PATH_HEADER: String = "LinkedNetexFilePath"
