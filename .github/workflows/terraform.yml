@@ -39,8 +39,19 @@ jobs:
     with:
       environment: tst
 
+  approval-tst:
+    if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') }}
+    needs: [tf-apply-dev, tf-plan-tst]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: Approve
+    steps:
+      - name: Manual approval
+        shell: bash
+        run: echo "Approve TST deployment"
+
   tf-apply-tst:
-    needs: [tf-plan-tst]
+    needs: [approval-tst, tf-plan-tst]
     name: Terraform Apply TST
     uses: entur/gha-terraform/.github/workflows/apply.yml@v2
     with:
@@ -55,8 +66,19 @@ jobs:
     with:
       environment: prd
 
+  approval-prd:
+    if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') }}
+    needs: [tf-apply-tst, tf-plan-prd]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: Approve
+    steps:
+      - name: Manual approval
+        shell: bash
+        run: echo "Approve PRD deployment"
+
   tf-apply-prd:
-    needs: [tf-plan-prd]
+    needs: [approval-prd, tf-plan-prd]
     name: Terraform Apply PRD
     uses: entur/gha-terraform/.github/workflows/apply.yml@v2
     with:
