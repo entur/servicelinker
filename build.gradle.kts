@@ -57,7 +57,7 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test")
-    testImplementation("org.wiremock:wiremock-standalone:3.13.1")
+    testImplementation("org.wiremock:wiremock-standalone:3.13.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("io.mockk:mockk:1.14.9")
     testImplementation("org.testcontainers:testcontainers:2.0.3")
