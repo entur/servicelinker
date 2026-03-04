@@ -385,12 +385,13 @@ class NetexProcessor(
 
         val fromPointRef = document.createElement("FromPointRef")
         fromPointRef.setAttribute("ref", pair.from.id)
-        fromPointRef.setAttribute("version", version)
+        // No version attribute: NeTEx identity constraints require all key fields to be
+        // non-null. Omitting version prevents ScheduledStopPoint_KeyRef from firing when
+        // the ScheduledStopPoint version differs from the ServiceLink version.
         serviceLinkElement.appendChild(fromPointRef)
 
         val toPointRef = document.createElement("ToPointRef")
         toPointRef.setAttribute("ref", pair.to.id)
-        toPointRef.setAttribute("version", version)
         serviceLinkElement.appendChild(toPointRef)
 
         return serviceLinkElement

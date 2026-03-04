@@ -102,6 +102,66 @@ class NetexProcessorTest {
     }
 
     @Test
+    fun `FromPointRef and ToPointRef should omit version to avoid ScheduledStopPoint_KeyRef mismatch`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+
+        // ScheduledStopPoints with non-"1" version (timestamp-based, as seen in NWY data)
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+                <dataObjects>
+                    <CompositeFrame id="TST:CompositeFrame:1" version="1">
+                        <frames>
+                            <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                                <scheduledStopPoints>
+                                    <ScheduledStopPoint id="TST:ScheduledStopPoint:A" version="20260212093839">
+                                        <Name>Stop A</Name>
+                                        <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
+                                    </ScheduledStopPoint>
+                                    <ScheduledStopPoint id="TST:ScheduledStopPoint:B" version="20260212093839">
+                                        <Name>Stop B</Name>
+                                        <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
+                                    </ScheduledStopPoint>
+                                </scheduledStopPoints>
+                                <journeyPatterns>
+                                    <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                                        <pointsInSequence>
+                                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:1" version="1" order="1">
+                                                <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:2" version="1" order="2">
+                                                <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                        </pointsInSequence>
+                                    </JourneyPattern>
+                                </journeyPatterns>
+                            </ServiceFrame>
+                        </frames>
+                    </CompositeFrame>
+                </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent()
+
+        val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream())
+        assertEquals(1, addedCount)
+
+        val doc = parseXmlFromBytes(processedXml)
+        val serviceLinks = doc.getElementsByTagName("ServiceLink")
+        assertEquals(1, serviceLinks.length)
+
+        val serviceLink = serviceLinks.item(0) as Element
+        val fromPointRef = serviceLink.getElementsByTagName("FromPointRef").item(0) as Element
+        val toPointRef = serviceLink.getElementsByTagName("ToPointRef").item(0) as Element
+
+        assertEquals("TST:ScheduledStopPoint:A", fromPointRef.getAttribute("ref"))
+        assertEquals("TST:ScheduledStopPoint:B", toPointRef.getAttribute("ref"))
+        assertFalse(fromPointRef.hasAttribute("version"),
+            "FromPointRef must omit version to prevent ScheduledStopPoint_KeyRef mismatch with non-'1' stop versions")
+        assertFalse(toPointRef.hasAttribute("version"),
+            "ToPointRef must omit version to prevent ScheduledStopPoint_KeyRef mismatch with non-'1' stop versions")
+    }
+
+    @Test
     fun `should handle OSRM service failures gracefully`() = runTest {
         mockOsrmFailure()
 
