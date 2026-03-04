@@ -265,6 +265,111 @@ class ZipHandlingTest {
             "omitting version on ServiceLinkRef prevents ServiceLink_KeyRef from firing")
     }
 
+    /**
+     * Regression test for: Missing ScheduledStopPoint key reference when ServiceLink
+     * references stops declared in different files.
+     *
+     * When from-stop is in _shared_data.xml but to-stop is only in the line file (or
+     * vice versa), the ServiceLink ends up in one file where the other stop isn't
+     * declared, violating NeTEx ScheduledStopPoint_KeyRef. The fix injects a minimal
+     * stub ScheduledStopPoint declaration for any missing referenced stops.
+     */
+    @Test
+    fun `should inject stub ScheduledStopPoint when ServiceLink references stops in different files`() = runTest {
+        // shared_data declares stop A only
+        val sharedDataXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+              <dataObjects>
+                <CompositeFrame id="TST:CompositeFrame:1" version="1">
+                  <frames>
+                    <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                      <scheduledStopPoints>
+                        <ScheduledStopPoint version="1" id="TST:ScheduledStopPoint:A">
+                          <Name>Stop A</Name>
+                          <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
+                        </ScheduledStopPoint>
+                      </scheduledStopPoints>
+                    </ServiceFrame>
+                  </frames>
+                </CompositeFrame>
+              </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent().toByteArray()
+
+        // line file declares stop B and has the JourneyPattern A→B
+        val lineXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+              <dataObjects>
+                <CompositeFrame id="TST:CompositeFrame:2" version="1">
+                  <frames>
+                    <ServiceFrame id="TST:ServiceFrame:2" version="1">
+                      <scheduledStopPoints>
+                        <ScheduledStopPoint version="1" id="TST:ScheduledStopPoint:B">
+                          <Name>Stop B</Name>
+                          <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
+                        </ScheduledStopPoint>
+                      </scheduledStopPoints>
+                      <journeyPatterns>
+                        <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                          <pointsInSequence>
+                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:1" version="1" order="1">
+                              <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="1"/>
+                            </StopPointInJourneyPattern>
+                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:2" version="1" order="2">
+                              <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="1"/>
+                            </StopPointInJourneyPattern>
+                          </pointsInSequence>
+                        </JourneyPattern>
+                      </journeyPatterns>
+                    </ServiceFrame>
+                  </frames>
+                </CompositeFrame>
+              </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent().toByteArray()
+
+        val zipData = ByteArrayOutputStream().also { buf ->
+            ZipOutputStream(buf).use { zos ->
+                zos.putNextEntry(ZipEntry("_shared_data.xml"))
+                zos.write(sharedDataXml)
+                zos.closeEntry()
+                zos.putNextEntry(ZipEntry("line.xml"))
+                zos.write(lineXml)
+                zos.closeEntry()
+            }
+        }.toByteArray()
+
+        val (processedZip, addedCount) = serviceLinkProducerService.processZipDirectly(zipData)
+        assertEquals(1, addedCount)
+
+        // Parse output files
+        val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val outputFiles = mutableMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(processedZip)).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                outputFiles[entry.name] = zis.readBytes()
+                entry = zis.nextEntry
+            }
+        }
+
+        // The ServiceLink should be placed in _shared_data.xml (from-stop A is declared there)
+        val sharedDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles["_shared_data.xml"]!!))
+        val serviceLinks = sharedDoc.getElementsByTagName("ServiceLink")
+        assertEquals(1, serviceLinks.length, "ServiceLink should be in _shared_data.xml")
+
+        // Stop B is only declared in line.xml, so a stub must have been added to _shared_data.xml
+        val declaredStops = sharedDoc.getElementsByTagName("ScheduledStopPoint")
+        val declaredIds = (0 until declaredStops.length).map {
+            (declaredStops.item(it) as org.w3c.dom.Element).getAttribute("id")
+        }.toSet()
+        assertTrue(declaredIds.contains("TST:ScheduledStopPoint:A"), "Original stop A should be declared")
+        assertTrue(declaredIds.contains("TST:ScheduledStopPoint:B"),
+            "Stub for stop B should be injected so ScheduledStopPoint_KeyRef constraint is satisfied")
+    }
+
     @Test
     fun `should detect ZIP by magic bytes regardless of extension`() = runTest {
         val testZip = createTestZip()

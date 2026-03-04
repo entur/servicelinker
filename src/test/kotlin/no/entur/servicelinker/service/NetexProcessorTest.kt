@@ -234,10 +234,73 @@ class NetexProcessorTest {
         val slijpElements = doc.getElementsByTagName("ServiceLinkInJourneyPattern")
 
         val firstId = (slijpElements.item(0) as Element).getAttribute("id")
-        assertEquals("FIN:ServiceLinkInJourneyPattern:1_to_2", firstId)
+        assertEquals("FIN:ServiceLinkInJourneyPattern:1_to_2", firstId, "Reused existing entry keeps original ID")
 
         val secondId = (slijpElements.item(1) as Element).getAttribute("id")
-        assertEquals("FIN:ServiceLinkInJourneyPattern:2_to_3", secondId)
+        assertEquals("FIN:ServiceLinkInJourneyPattern:1_2_to_3", secondId, "Newly created entry includes JP local ID")
+    }
+
+    @Test
+    fun `multiple JourneyPatterns sharing same stop pair should get unique SLIJP IDs`() = runTest {
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+                <dataObjects>
+                    <CompositeFrame id="TST:CompositeFrame:1" version="1">
+                        <frames>
+                            <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                                <scheduledStopPoints>
+                                    <ScheduledStopPoint id="TST:ScheduledStopPoint:A" version="1">
+                                        <Name>Stop A</Name>
+                                        <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
+                                    </ScheduledStopPoint>
+                                    <ScheduledStopPoint id="TST:ScheduledStopPoint:B" version="1">
+                                        <Name>Stop B</Name>
+                                        <Location><Longitude>11.0464</Longitude><Latitude>59.9556</Latitude></Location>
+                                    </ScheduledStopPoint>
+                                </scheduledStopPoints>
+                                <journeyPatterns>
+                                    <JourneyPattern id="TST:JourneyPattern:JP1" version="1">
+                                        <pointsInSequence>
+                                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:1" version="1" order="1">
+                                                <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:2" version="1" order="2">
+                                                <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                        </pointsInSequence>
+                                    </JourneyPattern>
+                                    <JourneyPattern id="TST:JourneyPattern:JP2" version="1">
+                                        <pointsInSequence>
+                                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:3" version="1" order="1">
+                                                <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                            <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:4" version="1" order="2">
+                                                <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="1"/>
+                                            </StopPointInJourneyPattern>
+                                        </pointsInSequence>
+                                    </JourneyPattern>
+                                </journeyPatterns>
+                            </ServiceFrame>
+                        </frames>
+                    </CompositeFrame>
+                </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent()
+
+        val (processedXml, _) = netexProcessor.processNetexFile(xml.byteInputStream())
+        val doc = parseXmlFromBytes(processedXml)
+
+        val slijpElements = doc.getElementsByTagName("ServiceLinkInJourneyPattern")
+        assertEquals(2, slijpElements.length, "Each JourneyPattern should have one ServiceLinkInJourneyPattern")
+
+        val id1 = (slijpElements.item(0) as Element).getAttribute("id")
+        val id2 = (slijpElements.item(1) as Element).getAttribute("id")
+        assertNotEquals(id1, id2, "ServiceLinkInJourneyPattern IDs must be unique across JourneyPatterns")
+        assertTrue(id1.contains("JP1"), "SLIJP ID should include JourneyPattern local ID")
+        assertTrue(id2.contains("JP2"), "SLIJP ID should include JourneyPattern local ID")
     }
 
     @Test

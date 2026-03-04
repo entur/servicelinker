@@ -311,9 +311,10 @@ class NetexProcessor(
                 imported.setAttribute("order", order.toString())
                 linksInSequence.appendChild(imported)
             } else {
+                val jpLocalId = jpElement.getAttribute("id").split(":").lastOrNull() ?: ""
                 val fromLocalId = fromRef.split(":").lastOrNull() ?: fromRef
                 val toLocalId = toRef.split(":").lastOrNull() ?: toRef
-                val slijpId = "$codespace:ServiceLinkInJourneyPattern:${fromLocalId}_to_${toLocalId}"
+                val slijpId = "$codespace:ServiceLinkInJourneyPattern:${jpLocalId}_${fromLocalId}_to_${toLocalId}"
 
                 val slijpElement = document.createElement("ServiceLinkInJourneyPattern")
                 slijpElement.setAttribute("id", slijpId)
@@ -515,6 +516,7 @@ class NetexProcessor(
             }
             addServiceLinksSection(document, newServiceLinkElements)
             ensureGmlNamespace(document)
+            ensureReferencedStopsDeclared(document, newServiceLinksForThisDoc)
             logger.info("Injected ${newServiceLinkElements.size} new ServiceLink(s)")
         }
 
@@ -550,6 +552,51 @@ class NetexProcessor(
         for ((_, element) in newServiceLinkElements) {
             serviceLinksSection.appendChild(element)
         }
+    }
+
+    /** Ensure every ScheduledStopPoint referenced by new ServiceLinks is declared in the document.
+     *  If a stop is missing (e.g. declared only in another file in the ZIP), inject a minimal stub
+     *  so that NeTEx ScheduledStopPoint_KeyRef validation passes. */
+    private fun ensureReferencedStopsDeclared(
+        document: Document,
+        newServiceLinks: List<Pair<String, Pair<StationPair, OSRMRoute?>>>
+    ) {
+        val declaredIds = extractScheduledStopPointIds(document)
+        val referencedStops = mutableSetOf<String>()
+        for ((_, pairAndRoute) in newServiceLinks) {
+            val (pair, _) = pairAndRoute
+            referencedStops.add(pair.from.id)
+            referencedStops.add(pair.to.id)
+        }
+        val missing = referencedStops - declaredIds
+        if (missing.isEmpty()) return
+
+        // Find or create the scheduledStopPoints container in the ServiceFrame
+        var container = document.getElementsByTagName("scheduledStopPoints").item(0) as? Element
+        if (container == null) {
+            val serviceFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
+                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
+                ?: document.documentElement
+            container = document.createElement("scheduledStopPoints")
+            // scheduledStopPoints must precede serviceLinks in NeTEx schema order
+            val insertionPoint = serviceFrame.childNodes.let { nodes ->
+                (0 until nodes.length).asSequence().map { nodes.item(it) }
+                    .firstOrNull { it is Element && it.localName in AFTER_SCHEDULED_STOP_POINTS }
+            }
+            if (insertionPoint != null) {
+                serviceFrame.insertBefore(container, insertionPoint)
+            } else {
+                serviceFrame.appendChild(container)
+            }
+        }
+
+        for (stopId in missing) {
+            val stub = document.createElement("ScheduledStopPoint")
+            stub.setAttribute("id", stopId)
+            stub.setAttribute("version", "1")
+            container.appendChild(stub)
+        }
+        logger.info("Added ${missing.size} stub ScheduledStopPoint declaration(s) for cross-file ServiceLink references")
     }
 
     private fun ensureGmlNamespace(document: Document) {
@@ -606,6 +653,13 @@ class NetexProcessor(
         }
         const val MAX_ROUTE_DISTANCE_METERS = 5_000_000 // 5000 km — sanity limit
         const val GML_NS = "http://www.opengis.net/gml/3.2"
+
+        // NeTEx ServiceFrame elements that must appear after <scheduledStopPoints> in schema order
+        val AFTER_SCHEDULED_STOP_POINTS = setOf(
+            "serviceLinks", "servicePatterns", "routeLinks", "routePoints", "routes",
+            "journeyPatterns", "stopAssignments", "connections",
+            "timingPoints", "timingLinks", "tariffZones",
+        )
 
         // NeTEx ServiceFrame elements that must appear after <serviceLinks> in schema order
         val AFTER_SERVICE_LINKS = setOf(
