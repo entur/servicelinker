@@ -64,6 +64,7 @@ class ServiceLinkProducerService(
         val allStopPoints = mutableMapOf<String, StopPoint>()
         val allStopAssignments = mutableMapOf<String, String>()
         val stopDeclarationFile = mutableMapOf<String, String>()  // stopId → filename
+        val stopVersions = mutableMapOf<String, String>()  // stopId → version from declaration
         val existingServiceLinksGlobal = mutableMapOf<String, String>()
         val rawPairRefs = mutableMapOf<String, Triple<String, String, TransportMode?>>()
         var firstXmlFile: String? = null
@@ -80,13 +81,16 @@ class ServiceLinkProducerService(
                         val assignments = netexProcessor.extractStopAssignments(document)
                         allStopPoints.putAll(stops)
                         allStopAssignments.putAll(assignments)
-                        // Record ALL declared ScheduledStopPoint IDs (not just those with inline
-                        // coordinates) so ServiceLinks are routed to the correct file even when
-                        // coordinates come from NSR enrichment.
-                        val declaredIds = netexProcessor.extractScheduledStopPointIds(document)
+                        // Record ALL declared ScheduledStopPoint IDs and versions (not just those
+                        // with inline coordinates) so ServiceLinks are routed to the correct file
+                        // and references use the correct version.
+                        val declaredIdsAndVersions = netexProcessor.extractScheduledStopPointIdsAndVersions(document)
                         logger.debug("Pass 1 {}: {} ScheduledStopPoint IDs declared, {} with inline coords",
-                            entry.name, declaredIds.size, stops.size)
-                        declaredIds.forEach { stopDeclarationFile[it] = entry.name }
+                            entry.name, declaredIdsAndVersions.size, stops.size)
+                        declaredIdsAndVersions.forEach { (id, version) ->
+                            stopDeclarationFile[id] = entry.name
+                            stopVersions[id] = version
+                        }
                         existingServiceLinksGlobal.putAll(netexProcessor.extractExistingServiceLinks(document))
                         netexProcessor.collectJpPairRefs(document).forEach { (k, v) -> rawPairRefs.putIfAbsent(k, v) }
                     } catch (e: Exception) {
@@ -98,7 +102,7 @@ class ServiceLinkProducerService(
         }
 
         // Enrich: resolve coordinates via NSR for stops with an assignment but no inline coordinates
-        val enrichedStopPoints = enrichStopPointsViaNsr(allStopPoints, allStopAssignments)
+        val enrichedStopPoints = enrichStopPointsViaNsr(allStopPoints, allStopAssignments, stopVersions)
 
         logger.info("ZIP pass 1: ${allStopPoints.size} stops, " +
                 "${enrichedStopPoints.size - allStopPoints.size} enriched via NSR, " +
@@ -235,7 +239,8 @@ class ServiceLinkProducerService(
 
     private suspend fun enrichStopPointsViaNsr(
         stopPoints: Map<String, StopPoint>,
-        stopAssignments: Map<String, String>
+        stopAssignments: Map<String, String>,
+        stopVersions: Map<String, String> = emptyMap()
     ): Map<String, StopPoint> {
         val enriched = stopPoints.toMutableMap()
 
@@ -248,7 +253,7 @@ class ServiceLinkProducerService(
                         name = null,
                         coordinate = coordinate,
                         transportMode = null,
-                        version = null
+                        version = stopVersions[stopPointRef]
                     )
                     logger.debug("Enriched stop {} with coordinates from NSR quay {}", stopPointRef, quayRef)
                 } else {

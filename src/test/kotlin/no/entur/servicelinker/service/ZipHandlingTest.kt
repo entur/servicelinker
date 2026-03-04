@@ -156,6 +156,9 @@ class ZipHandlingTest {
      */
     @Test
     fun `ServiceLinks should be written to the file that declares the ScheduledStopPoints even when coordinates come from NSR`() = runTest {
+        // Use timestamp-based versions (as seen in real NWY data) to verify version propagation
+        val stopVersion = "20260212093839"
+
         val sharedDataXml = """
             <?xml version="1.0" encoding="UTF-8"?>
             <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
@@ -164,20 +167,20 @@ class ZipHandlingTest {
                   <frames>
                     <ServiceFrame id="TST:ServiceFrame:1" version="1">
                       <scheduledStopPoints>
-                        <ScheduledStopPoint version="1" id="TST:ScheduledStopPoint:A">
+                        <ScheduledStopPoint version="$stopVersion" id="TST:ScheduledStopPoint:A">
                           <Name>Stop A</Name>
                         </ScheduledStopPoint>
-                        <ScheduledStopPoint version="1" id="TST:ScheduledStopPoint:B">
+                        <ScheduledStopPoint version="$stopVersion" id="TST:ScheduledStopPoint:B">
                           <Name>Stop B</Name>
                         </ScheduledStopPoint>
                       </scheduledStopPoints>
                       <stopAssignments>
-                        <PassengerStopAssignment version="1" id="TST:PassengerStopAssignment:A" order="1">
-                          <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="1"/>
+                        <PassengerStopAssignment version="$stopVersion" id="TST:PassengerStopAssignment:A" order="1">
+                          <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="$stopVersion"/>
                           <QuayRef ref="NSR:Quay:1" version="1"/>
                         </PassengerStopAssignment>
-                        <PassengerStopAssignment version="1" id="TST:PassengerStopAssignment:B" order="2">
-                          <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="1"/>
+                        <PassengerStopAssignment version="$stopVersion" id="TST:PassengerStopAssignment:B" order="2">
+                          <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="$stopVersion"/>
                           <QuayRef ref="NSR:Quay:2" version="1"/>
                         </PassengerStopAssignment>
                       </stopAssignments>
@@ -247,14 +250,12 @@ class ZipHandlingTest {
             }
         }
 
-        fun countElements(xml: ByteArray, tagName: String): Int {
-            val doc = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml))
-            return doc.getElementsByTagName(tagName).length
-        }
+        val sharedDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles["_shared_data.xml"]!!))
+        val lineDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles["line.xml"]!!))
 
-        val sharedDataServiceLinks = countElements(outputFiles["_shared_data.xml"]!!, "ServiceLink")
-        val lineServiceLinks = countElements(outputFiles["line.xml"]!!, "ServiceLink")
-        val lineServiceLinkInJPs = countElements(outputFiles["line.xml"]!!, "ServiceLinkInJourneyPattern")
+        val sharedDataServiceLinks = sharedDoc.getElementsByTagName("ServiceLink").length
+        val lineServiceLinks = lineDoc.getElementsByTagName("ServiceLink").length
+        val lineServiceLinkInJPs = lineDoc.getElementsByTagName("ServiceLinkInJourneyPattern").length
 
         assertEquals(1, sharedDataServiceLinks,
             "ServiceLink must be in _shared_data.xml (where ScheduledStopPoints are declared)")
@@ -263,6 +264,17 @@ class ZipHandlingTest {
         assertEquals(1, lineServiceLinkInJPs,
             "linksInSequence must be written to the JP file even for cross-file ServiceLinks; " +
             "omitting version on ServiceLinkRef prevents ServiceLink_KeyRef from firing")
+
+        // Verify FromPointRef/ToPointRef use the ScheduledStopPoint's actual version,
+        // not hardcoded "1". This is critical for NSR-enriched stops where the version
+        // comes from the ScheduledStopPoint declaration, not inline coordinates.
+        val serviceLink = sharedDoc.getElementsByTagName("ServiceLink").item(0) as org.w3c.dom.Element
+        val fromPointRef = serviceLink.getElementsByTagName("FromPointRef").item(0) as org.w3c.dom.Element
+        val toPointRef = serviceLink.getElementsByTagName("ToPointRef").item(0) as org.w3c.dom.Element
+        assertEquals(stopVersion, fromPointRef.getAttribute("version"),
+            "FromPointRef must use the ScheduledStopPoint's actual version for NSR-enriched stops")
+        assertEquals(stopVersion, toPointRef.getAttribute("version"),
+            "ToPointRef must use the ScheduledStopPoint's actual version for NSR-enriched stops")
     }
 
     /**

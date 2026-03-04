@@ -385,13 +385,14 @@ class NetexProcessor(
 
         val fromPointRef = document.createElement("FromPointRef")
         fromPointRef.setAttribute("ref", pair.from.id)
-        // No version attribute: NeTEx identity constraints require all key fields to be
-        // non-null. Omitting version prevents ScheduledStopPoint_KeyRef from firing when
-        // the ScheduledStopPoint version differs from the ServiceLink version.
+        // Use the stop's actual version to match ScheduledStopPoint_KeyRef constraint.
+        // Source data may use timestamp-based versions (e.g. "20260212093839") instead of "1".
+        fromPointRef.setAttribute("version", pair.from.version ?: version)
         serviceLinkElement.appendChild(fromPointRef)
 
         val toPointRef = document.createElement("ToPointRef")
         toPointRef.setAttribute("ref", pair.to.id)
+        toPointRef.setAttribute("version", pair.to.version ?: version)
         serviceLinkElement.appendChild(toPointRef)
 
         return serviceLinkElement
@@ -438,14 +439,17 @@ class NetexProcessor(
 
     // --- Public helpers for multi-file ZIP processing ---
 
-    /** Return all ScheduledStopPoint IDs declared in the document, regardless of whether they
-     *  have inline coordinates. Used to populate the stopDeclarationFile map in ZIP processing. */
-    fun extractScheduledStopPointIds(document: Document): Set<String> {
-        val ids = mutableSetOf<String>()
+    /** Return all ScheduledStopPoint IDs and their versions declared in the document,
+     *  regardless of whether they have inline coordinates.
+     *  Used to populate the stopDeclarationFile map and stop version map in ZIP processing. */
+    fun extractScheduledStopPointIdsAndVersions(document: Document): Map<String, String> {
+        val ids = mutableMapOf<String, String>()
         val elements = document.getElementsByTagName("ScheduledStopPoint")
         for (i in 0 until elements.length) {
-            val id = (elements.item(i) as Element).getAttribute("id")
-            if (id.isNotBlank()) ids.add(id)
+            val el = elements.item(i) as Element
+            val id = el.getAttribute("id")
+            val version = el.getAttribute("version").ifBlank { "1" }
+            if (id.isNotBlank()) ids[id] = version
         }
         return ids
     }
@@ -562,14 +566,14 @@ class NetexProcessor(
         document: Document,
         newServiceLinks: List<Pair<String, Pair<StationPair, OSRMRoute?>>>
     ) {
-        val declaredIds = extractScheduledStopPointIds(document)
-        val referencedStops = mutableSetOf<String>()
+        val declaredIds = extractScheduledStopPointIdsAndVersions(document).keys
+        val referencedStops = mutableMapOf<String, String>()
         for ((_, pairAndRoute) in newServiceLinks) {
             val (pair, _) = pairAndRoute
-            referencedStops.add(pair.from.id)
-            referencedStops.add(pair.to.id)
+            referencedStops[pair.from.id] = pair.from.version ?: "1"
+            referencedStops[pair.to.id] = pair.to.version ?: "1"
         }
-        val missing = referencedStops - declaredIds
+        val missing = referencedStops.filterKeys { it !in declaredIds }
         if (missing.isEmpty()) return
 
         // Find or create the scheduledStopPoints container in the ServiceFrame
@@ -591,10 +595,10 @@ class NetexProcessor(
             }
         }
 
-        for (stopId in missing) {
+        for ((stopId, stopVersion) in missing) {
             val stub = document.createElement("ScheduledStopPoint")
             stub.setAttribute("id", stopId)
-            stub.setAttribute("version", "1")
+            stub.setAttribute("version", stopVersion)
             container.appendChild(stub)
         }
         logger.info("Added ${missing.size} stub ScheduledStopPoint declaration(s) for cross-file ServiceLink references")

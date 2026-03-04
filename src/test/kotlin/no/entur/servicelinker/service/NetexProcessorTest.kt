@@ -102,7 +102,7 @@ class NetexProcessorTest {
     }
 
     @Test
-    fun `FromPointRef and ToPointRef should omit version to avoid ScheduledStopPoint_KeyRef mismatch`() = runTest {
+    fun `FromPointRef and ToPointRef should use the ScheduledStopPoint version`() = runTest {
         mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
         // ScheduledStopPoints with non-"1" version (timestamp-based, as seen in NWY data)
@@ -155,10 +155,10 @@ class NetexProcessorTest {
 
         assertEquals("TST:ScheduledStopPoint:A", fromPointRef.getAttribute("ref"))
         assertEquals("TST:ScheduledStopPoint:B", toPointRef.getAttribute("ref"))
-        assertFalse(fromPointRef.hasAttribute("version"),
-            "FromPointRef must omit version to prevent ScheduledStopPoint_KeyRef mismatch with non-'1' stop versions")
-        assertFalse(toPointRef.hasAttribute("version"),
-            "ToPointRef must omit version to prevent ScheduledStopPoint_KeyRef mismatch with non-'1' stop versions")
+        assertEquals("20260212093839", fromPointRef.getAttribute("version"),
+            "FromPointRef must use the ScheduledStopPoint's actual version, not hardcoded '1'")
+        assertEquals("20260212093839", toPointRef.getAttribute("version"),
+            "ToPointRef must use the ScheduledStopPoint's actual version, not hardcoded '1'")
     }
 
     @Test
