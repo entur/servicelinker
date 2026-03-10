@@ -16,9 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    outputs:
-      image_tag: ${{ steps.build-push.outputs.image_tag }}
-
     steps:
       - uses: actions/checkout@v5
 
