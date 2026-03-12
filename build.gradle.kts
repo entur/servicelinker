@@ -29,7 +29,7 @@ repositories {
 
 dependencyManagement {
     imports {
-        mavenBom("com.google.cloud:spring-cloud-gcp-dependencies:7.4.5")
+        mavenBom("com.google.cloud:spring-cloud-gcp-dependencies:8.0.1")
     }
 }
 
