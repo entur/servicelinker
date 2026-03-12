@@ -371,10 +371,16 @@ class NetexProcessor(
         val gmlLineString = document.createElementNS(GML_NS, "gml:LineString")
         gmlLineString.setAttribute("srsName", SRS_NAME_WGS84)
         gmlLineString.setAttributeNS(GML_NS, "gml:id", "lsp_${fromId}_${toId}")
-        val coordinates = route?.coordinates ?: listOf(
-            listOf(pair.from.coordinate.longitude.toDouble(), pair.from.coordinate.latitude.toDouble()),
-            listOf(pair.to.coordinate.longitude.toDouble(), pair.to.coordinate.latitude.toDouble())
-        )
+        val fromCoord = listOf(pair.from.coordinate.longitude, pair.from.coordinate.latitude)
+        val toCoord = listOf(pair.to.coordinate.longitude, pair.to.coordinate.latitude)
+        val coordinates = if (route != null) {
+            val osrmCoords = route.coordinates.toMutableList()
+            osrmCoords[0] = fromCoord
+            osrmCoords[osrmCoords.lastIndex] = toCoord
+            osrmCoords
+        } else {
+            listOf(fromCoord, toCoord)
+        }
         val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
         val posList = document.createElementNS(GML_NS, "gml:posList")
         posList.textContent = posListString

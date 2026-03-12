@@ -1043,6 +1043,43 @@ class NetexProcessorTest {
     }
 
     @Test
+    fun `posList should start and end at stop coordinates not OSRM snapped positions`() = runTest {
+        // OSRM may snap route start/end to the nearest point on its network, which can be
+        // hundreds of meters from the actual stop. The linestring must be clamped to stop coords.
+        val snappedFrom = Coordinate(59.960, 11.050)  // ~500m from stop 2
+        val intermediate = Coordinate(59.980, 11.100)
+        val snappedTo = Coordinate(60.140, 11.170)    // ~600m from stop 3
+        val osrmCoords = listOf(snappedFrom, intermediate, snappedTo)
+        mockOsrmWithRoute(osrmCoords, 20000.0)
+
+        val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexInputStream())
+        assertEquals(1, addedCount)
+
+        val doc = parseXmlFromBytes(processedXml)
+        val newLink = (0 until doc.getElementsByTagName("ServiceLink").length)
+            .map { doc.getElementsByTagName("ServiceLink").item(it) as Element }
+            .first { it.getAttribute("id") == "FIN:ServiceLink:2-3" }
+
+        val posList = newLink.getElementsByTagNameNS("http://www.opengis.net/gml/3.2", "posList")
+            .item(0).textContent.trim().split("\\s+".toRegex()).map { it.toDouble() }
+
+        // posList is "lat lon lat lon ..." — 3 coordinate pairs
+        assertEquals(6, posList.size, "Should have 3 coordinate pairs (6 values)")
+
+        // First pair should be stop 2 coords (59.9556, 11.0464), not OSRM-snapped (59.960, 11.050)
+        assertEquals(59.9556, posList[0], 0.0001, "First lat should be stop 2 latitude, not OSRM-snapped")
+        assertEquals(11.0464, posList[1], 0.0001, "First lon should be stop 2 longitude, not OSRM-snapped")
+
+        // Intermediate point should be preserved from OSRM (within polyline encoding precision)
+        assertEquals(59.980, posList[2], 0.001, "Intermediate lat should be from OSRM")
+        assertEquals(11.100, posList[3], 0.001, "Intermediate lon should be from OSRM")
+
+        // Last pair should be stop 3 coords (60.1450, 11.1740), not OSRM-snapped (60.140, 11.170)
+        assertEquals(60.1450, posList[4], 0.0001, "Last lat should be stop 3 latitude, not OSRM-snapped")
+        assertEquals(11.1740, posList[5], 0.0001, "Last lon should be stop 3 longitude, not OSRM-snapped")
+    }
+
+    @Test
     fun `serviceLinks should use GML 3_2 namespace`() = runTest {
         mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
