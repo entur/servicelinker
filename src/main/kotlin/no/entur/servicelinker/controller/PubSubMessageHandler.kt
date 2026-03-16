@@ -6,6 +6,7 @@ import com.google.cloud.spring.pubsub.support.GcpPubSubHeaders
 import kotlinx.coroutines.runBlocking
 import no.entur.servicelinker.service.ServiceLinkProducerService
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.integration.annotation.ServiceActivator
 import org.springframework.messaging.Message
@@ -25,31 +26,34 @@ class PubSubMessageHandler(
         val acker = message.headers[GcpPubSubHeaders.ORIGINAL_MESSAGE] as? BasicAcknowledgeablePubsubMessage
         val attributes = acker?.pubsubMessage?.attributesMap ?: emptyMap()
 
-        logger.debug("Message headers: {}", message.headers.keys)
-        logger.debug("Original message type: {}", message.headers[GcpPubSubHeaders.ORIGINAL_MESSAGE]?.javaClass?.name ?: "null")
-        logger.debug("PubSub attributes: {}", attributes)
-
         val correlationId = attributes[CORRELATION_ID] ?: ""
         val datasetReferential = attributes[DATASET_REFERENTIAL] ?: ""
         val modesFilter: Set<String>? = attributes[SERVICE_LINK_MODES_HEADER]?.let { value ->
             if (value.isBlank()) emptySet() else value.split(",").map { it.trim().uppercase() }.toSet()
         }
 
+        MDC.put("correlationId", correlationId)
+        MDC.put("codespace", datasetReferential)
+        MDC.put("stage", "incoming")
         try {
             val targetFileHandle = attributes[TARGET_FILE_HANDLE]
                 ?: throw IllegalArgumentException("Message missing 'RutebankenTargetFileHandle' attribute")
 
-            logger.info("Received PubSub message: file=$targetFileHandle, correlationId=$correlationId, referential=$datasetReferential, modesFilter=$modesFilter")
+            logger.info("Received PubSub message: file={}, modesFilter={}", targetFileHandle, modesFilter)
 
+            MDC.put("stage", "outgoing/started")
             pubSubTemplate.publish(
                 outboundTopic,
                 "",
                 attributes.toMap() + mapOf(LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_STARTED)
             )
+            logger.info("Published STARTED status")
 
+            MDC.put("stage", "processing")
             val addedCount = processWithRetry(inputBucket, targetFileHandle, modesFilter)
 
-            logger.info("Processing complete. Added $addedCount ServiceLinks. Publishing status.")
+            MDC.put("stage", "outgoing/success")
+            logger.info("Processing complete, added {} ServiceLinks. Publishing SUCCESS status.", addedCount)
 
             pubSubTemplate.publish(
                 outboundTopic,
@@ -60,11 +64,13 @@ class PubSubMessageHandler(
                     "addedServiceLinksCount" to addedCount.toString()
                 )
             )
+            logger.info("Published SUCCESS status")
 
             acker?.ack()
-            logger.info("Message acknowledged for correlationId=$correlationId")
+            logger.info("Message acknowledged")
         } catch (e: Exception) {
-            logger.error("Failed to process PubSub message: ${e.message}", e)
+            MDC.put("stage", "outgoing/failed")
+            logger.error("Failed to process PubSub message: {}", e.message, e)
             try {
                 pubSubTemplate.publish(
                     outboundTopic,
@@ -74,10 +80,14 @@ class PubSubMessageHandler(
                         LINKING_ERROR_CODE_HEADER to (e.message ?: "Unknown error")
                     )
                 )
+                logger.info("Published FAILED status")
             } catch (publishEx: Exception) {
-                logger.error("Failed to publish FAILED status for correlationId=$correlationId: ${publishEx.message}")
+                logger.error("Failed to publish FAILED status: {}", publishEx.message)
             }
             acker?.ack()
+            logger.info("Message acknowledged after failure")
+        } finally {
+            MDC.clear()
         }
     }
 

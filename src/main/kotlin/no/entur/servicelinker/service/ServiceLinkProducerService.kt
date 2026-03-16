@@ -7,6 +7,7 @@ import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.model.TransportMode
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.io.ByteArrayInputStream
@@ -26,7 +27,8 @@ class ServiceLinkProducerService(
     private val logger = LoggerFactory.getLogger(ServiceLinkProducerService::class.java)
 
     suspend fun processDataset(inputBucket: String, objectName: String, modesFilter: Set<String>? = null): Int {
-        logger.info("Processing dataset: gs://$inputBucket/$objectName, modesFilter=$modesFilter")
+        MDC.put("stage", "processing/download")
+        logger.info("Processing dataset: gs://{}/{}, modesFilter={}", inputBucket, objectName, modesFilter)
 
         val data = gcsService.downloadFile(inputBucket, objectName)
 
@@ -34,17 +36,20 @@ class ServiceLinkProducerService(
                 && data[2] == 0x03.toByte() && data[3] == 0x04.toByte()
 
         if (modesFilter != null && modesFilter.isEmpty()) {
-            logger.info("ServiceLinkModes is empty — skipping service link generation for $objectName")
+            logger.info("ServiceLinkModes is empty — skipping service link generation for {}", objectName)
+            MDC.put("stage", "processing/upload")
             gcsService.uploadFile(data, outputBucket, objectName, if (isZip) "application/zip" else "application/xml")
             return 0
         }
 
+        MDC.put("stage", "processing/parse")
         val (processedData, totalAdded) = if (isZip || objectName.endsWith(".zip", ignoreCase = true)) {
             processZipArchive(data, modesFilter)
         } else {
             processSingleXml(data, modesFilter)
         }
 
+        MDC.put("stage", "processing/upload")
         gcsService.uploadFile(
             processedData,
             outputBucket,
@@ -52,7 +57,7 @@ class ServiceLinkProducerService(
             if (isZip) "application/zip" else "application/xml"
         )
 
-        logger.info("Dataset processing complete. Added $totalAdded ServiceLinks total. Output: gs://$outputBucket/$objectName")
+        logger.info("Dataset processing complete. Added {} ServiceLinks total. Output: gs://{}/{}", totalAdded, outputBucket, objectName)
         return totalAdded
     }
 
@@ -61,6 +66,7 @@ class ServiceLinkProducerService(
     private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> {
         // PASS 1: Collect stops, assignments, stopDeclarationFile, existing service links,
         //         and raw JP pair refs (stop IDs only — coordinates not needed yet).
+        MDC.put("stage", "processing/parse")
         val allStopPoints = mutableMapOf<String, StopPoint>()
         val allStopAssignments = mutableMapOf<String, String>()
         val stopDeclarationFile = mutableMapOf<String, String>()  // stopId → filename
@@ -102,6 +108,7 @@ class ServiceLinkProducerService(
         }
 
         // Enrich: resolve coordinates via NSR for stops with an assignment but no inline coordinates
+        MDC.put("stage", "processing/enrich")
         val enrichedStopPoints = enrichStopPointsViaNsr(allStopPoints, allStopAssignments, stopVersions)
 
         logger.info("ZIP pass 1: ${allStopPoints.size} stops, " +
@@ -121,6 +128,7 @@ class ServiceLinkProducerService(
         logger.info("ZIP planning: ${allNeededPairs.size} pairs need new service links")
 
         // ROUTE all pairs via OSRM globally
+        MDC.put("stage", "processing/route")
         val allServiceLinks = existingServiceLinksGlobal.toMutableMap()
         val routedPairs = linkedMapOf<String, Pair<StationPair, OSRMRoute?>>()
         var remaining = limit
@@ -162,6 +170,7 @@ class ServiceLinkProducerService(
         }
 
         // WRITING PASS: inject ServiceLinks into target files, linksInSequence into JP files
+        MDC.put("stage", "processing/inject")
         val outputBuffer = ByteArrayOutputStream()
         var totalAdded = 0
 
