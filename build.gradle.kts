@@ -1,9 +1,9 @@
 plugins {
-    kotlin("jvm") version "2.3.10"
-    kotlin("plugin.spring") version "2.3.10"
-    id("org.springframework.boot") version "4.0.3"
-    id("io.spring.dependency-management") version "1.1.7"
-    id("com.github.ben-manes.versions") version "0.53.0"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.spring)
+    alias(libs.plugins.spring.boot)
+    alias(libs.plugins.spring.dependency.management)
+    alias(libs.plugins.gradle.versions)
 }
 
 fun isNonStable(version: String): Boolean {
@@ -29,40 +29,41 @@ repositories {
 
 dependencyManagement {
     imports {
-        mavenBom("com.google.cloud:spring-cloud-gcp-dependencies:7.4.5")
+        mavenBom(libs.spring.cloud.gcp.bom.get().toString())
     }
 }
 
 dependencies {
-    implementation("org.springframework.boot:spring-boot-starter")
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-webflux")
-    implementation("org.springframework.boot:spring-boot-starter-actuator")
-    implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation(libs.spring.boot.starter)
+    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.webflux)
+    implementation(libs.spring.boot.starter.actuator)
+    implementation(libs.micrometer.registry.prometheus)
+    implementation(libs.kotlin.reflect)
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.coroutines.reactor)
 
-    implementation("com.google.cloud:spring-cloud-gcp-starter-storage")
-    implementation("com.google.cloud:spring-cloud-gcp-starter-pubsub")
+    implementation(libs.spring.cloud.gcp.starter.storage)
+    implementation(libs.spring.cloud.gcp.starter.pubsub)
 
-    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-xml")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation(libs.jackson.dataformat.xml)
+    implementation(libs.jackson.module.kotlin)
 
-    implementation("com.github.ben-manes.caffeine:caffeine")
-    implementation("net.logstash.logback:logstash-logback-encoder:9.0")
+    implementation(libs.caffeine)
+    implementation(libs.logstash.logback.encoder)
 
-    implementation("org.springframework.integration:spring-integration-core")
+    implementation(libs.spring.integration.core)
 
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test")
-    testImplementation("org.wiremock:wiremock-standalone:3.13.2")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testImplementation("io.mockk:mockk:1.14.9")
-    testImplementation("org.testcontainers:testcontainers:2.0.3")
-    testImplementation("org.testcontainers:testcontainers-gcloud:2.0.3")
-    testImplementation("org.testcontainers:testcontainers-junit-jupiter:2.0.3")
+    testImplementation(libs.spring.boot.starter.test)
+    testImplementation(libs.kotlin.test.junit5)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.wiremock.standalone)
+    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(libs.mockk)
+    testImplementation(libs.testcontainers)
+    testImplementation(libs.testcontainers.gcloud)
+    testImplementation(libs.testcontainers.junit.jupiter)
 }
 
 kotlin {

@@ -1,0 +1,44 @@
+[versions]
+kotlin = "2.3.20"
+spring-boot = "4.0.3"
+spring-dependency-management = "1.1.7"
+spring-cloud-gcp = "8.0.1"
+gradle-versions = "0.53.0"
+logstash-logback-encoder = "9.0"
+wiremock = "3.13.2"
+mockk = "1.14.9"
+testcontainers = "2.0.3"
+
+[libraries]
+spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter" }
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+spring-integration-core = { module = "org.springframework.integration:spring-integration-core" }
+spring-cloud-gcp-bom = { module = "com.google.cloud:spring-cloud-gcp-dependencies", version.ref = "spring-cloud-gcp" }
+spring-cloud-gcp-starter-storage = { module = "com.google.cloud:spring-cloud-gcp-starter-storage" }
+spring-cloud-gcp-starter-pubsub = { module = "com.google.cloud:spring-cloud-gcp-starter-pubsub" }
+micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus" }
+kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect" }
+kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core" }
+kotlinx-coroutines-reactor = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-reactor" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test" }
+jackson-dataformat-xml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-xml" }
+jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin" }
+caffeine = { module = "com.github.ben-manes.caffeine:caffeine" }
+logstash-logback-encoder = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstash-logback-encoder" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+wiremock-standalone = { module = "org.wiremock:wiremock-standalone", version.ref = "wiremock" }
+mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
+testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
+testcontainers-gcloud = { module = "org.testcontainers:testcontainers-gcloud", version.ref = "testcontainers" }
+testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }
+gradle-versions = { id = "com.github.ben-manes.versions", version.ref = "gradle-versions" }
