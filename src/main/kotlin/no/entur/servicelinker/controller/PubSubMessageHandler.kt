@@ -4,6 +4,7 @@ import com.google.cloud.spring.pubsub.core.PubSubTemplate
 import com.google.cloud.spring.pubsub.support.BasicAcknowledgeablePubsubMessage
 import com.google.cloud.spring.pubsub.support.GcpPubSubHeaders
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.slf4j.MDCContext
 import no.entur.servicelinker.service.ServiceLinkProducerService
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
@@ -26,8 +27,8 @@ class PubSubMessageHandler(
         val acker = message.headers[GcpPubSubHeaders.ORIGINAL_MESSAGE] as? BasicAcknowledgeablePubsubMessage
         val attributes = acker?.pubsubMessage?.attributesMap ?: emptyMap()
 
-        val correlationId = attributes[CORRELATION_ID] ?: ""
-        val datasetReferential = attributes[DATASET_REFERENTIAL] ?: ""
+        val correlationId = attributes[CORRELATION_ID] ?: "unknown"
+        val datasetReferential = attributes[DATASET_REFERENTIAL] ?: "unknown"
         val modesFilter: Set<String>? = attributes[SERVICE_LINK_MODES_HEADER]?.let { value ->
             if (value.isBlank()) emptySet() else value.split(",").map { it.trim().uppercase() }.toSet()
         }
@@ -95,7 +96,7 @@ class PubSubMessageHandler(
         var lastException: Exception? = null
         repeat(MAX_RETRIES) { attempt ->
             try {
-                return runBlocking {
+                return runBlocking(MDCContext()) {
                     serviceLinkProducerService.processDataset(bucketName, objectName, modesFilter)
                 }
             } catch (e: Exception) {

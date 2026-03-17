@@ -43,6 +43,7 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.reactor)
+    implementation(libs.kotlinx.coroutines.slf4j)
 
     implementation(libs.spring.cloud.gcp.starter.storage)
     implementation(libs.spring.cloud.gcp.starter.pubsub)
