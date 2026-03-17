@@ -96,6 +96,11 @@ class PubSubMessageHandler(
         var lastException: Exception? = null
         repeat(MAX_RETRIES) { attempt ->
             try {
+                // MDCContext() captures the current MDC snapshot and restores it on each
+                // coroutine resumption. MDC.put("stage",...) calls inside suspend functions
+                // work as long as runBlocking executes on the calling thread (the default).
+                // If a dispatcher change is introduced, stage updates may be lost after
+                // suspension points — correlationId/codespace are unaffected.
                 return runBlocking(MDCContext()) {
                     serviceLinkProducerService.processDataset(bucketName, objectName, modesFilter)
                 }
