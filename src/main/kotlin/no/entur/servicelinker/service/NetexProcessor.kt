@@ -109,6 +109,7 @@ class NetexProcessor(
             addLinksInSequence(document, jpElement, stopRefIds, allServiceLinks)
         }
 
+        ensureGmlNamespace(document)
         val modifiedXml = documentToByteArray(document)
         logger.info("NeTEx processing completed. Added $addedCount service links")
         return Pair(modifiedXml, addedCount)
@@ -367,9 +368,9 @@ class NetexProcessor(
         val linkSequenceProjection = document.createElement("LinkSequenceProjection")
         linkSequenceProjection.setAttribute("id", linkSequenceProjectionId)
         linkSequenceProjection.setAttribute("version", "1")
-        val lineString = document.createElement("LineString")
-        lineString.setAttribute("srsName", SRS_NAME_WGS84)
-        lineString.setAttribute("id", "lsp_${fromId}_${toId}")
+        val gmlLineString = document.createElementNS(GML_NS, "gml:LineString")
+        gmlLineString.setAttribute("srsName", SRS_NAME_WGS84)
+        gmlLineString.setAttributeNS(GML_NS, "gml:id", "lsp_${fromId}_${toId}")
         val fromCoord = listOf(pair.from.coordinate.longitude, pair.from.coordinate.latitude)
         val toCoord = listOf(pair.to.coordinate.longitude, pair.to.coordinate.latitude)
         val coordinates = if (route != null) {
@@ -381,10 +382,10 @@ class NetexProcessor(
             listOf(fromCoord, toCoord)
         }
         val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
-        val posList = document.createElement("posList")
+        val posList = document.createElementNS(GML_NS, "gml:posList")
         posList.textContent = posListString
-        lineString.appendChild(posList)
-        linkSequenceProjection.appendChild(lineString)
+        gmlLineString.appendChild(posList)
+        linkSequenceProjection.appendChild(gmlLineString)
         projectionsElement.appendChild(linkSequenceProjection)
         serviceLinkElement.appendChild(projectionsElement)
 
@@ -525,6 +526,7 @@ class NetexProcessor(
                 pairKey to createServiceLinkElement(document, pair, route)
             }
             addServiceLinksSection(document, newServiceLinkElements)
+            ensureGmlNamespace(document)
             ensureReferencedStopsDeclared(document, newServiceLinksForThisDoc)
             logger.info("Injected ${newServiceLinkElements.size} new ServiceLink(s)")
         }
@@ -608,6 +610,14 @@ class NetexProcessor(
         logger.info("Added ${missing.size} stub ScheduledStopPoint declaration(s) for cross-file ServiceLink references")
     }
 
+    private fun ensureGmlNamespace(document: Document) {
+        val root = document.documentElement
+        val existing = root.getAttribute("xmlns:gml")
+        if (existing != GML_NS) {
+            root.setAttribute("xmlns:gml", GML_NS)
+        }
+    }
+
     private fun extractTransportMode(element: Element): TransportMode? {
         val transportModeText = getElementText(element, "TransportMode")
             ?: getElementText(element, "VehicleMode")
@@ -653,6 +663,7 @@ class NetexProcessor(
             return "$tariffZone:ServiceLink:$fromId-$toId"
         }
         const val MAX_ROUTE_DISTANCE_METERS = 5_000_000 // 5000 km — sanity limit
+        const val GML_NS = "http://www.opengis.net/gml/3.2"
 
         // NeTEx ServiceFrame elements that must appear after <scheduledStopPoints> in schema order
         val AFTER_SCHEDULED_STOP_POINTS = setOf(
