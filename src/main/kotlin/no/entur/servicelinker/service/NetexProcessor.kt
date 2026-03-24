@@ -477,33 +477,6 @@ class NetexProcessor(
         return result
     }
 
-    /** Collect pairs needing new ServiceLinks from this document's JourneyPatterns. */
-    fun findNeededPairs(
-        document: Document,
-        allStopPoints: Map<String, StopPoint>,
-        existingServiceLinks: Map<String, String>
-    ): Map<String, StationPair> {
-        val localStops = extractStopPoints(document).associateBy { it.id }
-        val stopPointsMap = allStopPoints + localStops
-        val journeyPatterns = extractJourneyPatterns(document)
-        val jpModeMap = buildJpModeMap(document)
-        val neededPairs = mutableMapOf<String, StationPair>()
-        for ((jpElement, stopRefIds) in journeyPatterns) {
-            val jpMode = jpModeMap[jpElement.getAttribute("id")]
-            for (i in 0 until stopRefIds.size - 1) {
-                val fromRef = stopRefIds[i]
-                val toRef = stopRefIds[i + 1]
-                val pairKey = "${fromRef}_${toRef}"
-                if (!existingServiceLinks.containsKey(pairKey) && !neededPairs.containsKey(pairKey)) {
-                    val from = stopPointsMap[fromRef]
-                    val to = stopPointsMap[toRef]
-                    if (from != null && to != null) neededPairs[pairKey] = StationPair(from, to, jpMode)
-                }
-            }
-        }
-        return neededPairs
-    }
-
     /** Inject pre-routed ServiceLinks and linksInSequence into a document.
      *  Used by multi-file ZIP processing where OSRM routing is done globally. */
     fun injectLinks(
