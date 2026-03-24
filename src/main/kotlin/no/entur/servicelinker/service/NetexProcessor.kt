@@ -368,9 +368,9 @@ class NetexProcessor(
         val linkSequenceProjection = document.createElement("LinkSequenceProjection")
         linkSequenceProjection.setAttribute("id", linkSequenceProjectionId)
         linkSequenceProjection.setAttribute("version", "1")
-        val gmlLineString = document.createElementNS(GML_NS, "gml:LineString")
+        val gmlLineString = document.createElementNS(GML_NS, "${GML_PREFIX}:LineString")
         gmlLineString.setAttribute("srsName", SRS_NAME_WGS84)
-        gmlLineString.setAttributeNS(GML_NS, "gml:id", "lsp_${fromId}_${toId}")
+        gmlLineString.setAttributeNS(GML_NS, "${GML_PREFIX}:id", "lsp_${fromId}_${toId}")
         val fromCoord = listOf(pair.from.coordinate.longitude, pair.from.coordinate.latitude)
         val toCoord = listOf(pair.to.coordinate.longitude, pair.to.coordinate.latitude)
         val coordinates = if (route != null) {
@@ -382,7 +382,7 @@ class NetexProcessor(
             listOf(fromCoord, toCoord)
         }
         val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
-        val posList = document.createElementNS(GML_NS, "gml:posList")
+        val posList = document.createElementNS(GML_NS, "${GML_PREFIX}:posList")
         posList.textContent = posListString
         gmlLineString.appendChild(posList)
         linkSequenceProjection.appendChild(gmlLineString)
@@ -612,9 +612,9 @@ class NetexProcessor(
 
     private fun ensureGmlNamespace(document: Document) {
         val root = document.documentElement
-        val existing = root.getAttribute("xmlns:gml")
+        val existing = root.getAttribute("xmlns:${GML_PREFIX}")
         if (existing != GML_NS) {
-            root.setAttribute("xmlns:gml", GML_NS)
+            root.setAttribute("xmlns:${GML_PREFIX}", GML_NS)
         }
     }
 
@@ -664,6 +664,7 @@ class NetexProcessor(
         }
         const val MAX_ROUTE_DISTANCE_METERS = 5_000_000 // 5000 km — sanity limit
         const val GML_NS = "http://www.opengis.net/gml/3.2"
+        const val GML_PREFIX = "gis"
 
         // NeTEx ServiceFrame elements that must appear after <scheduledStopPoints> in schema order
         val AFTER_SCHEDULED_STOP_POINTS = setOf(

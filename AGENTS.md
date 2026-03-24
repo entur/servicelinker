@@ -50,7 +50,7 @@ playbook to diagnose.
 
 Find the ServiceLink in `_*_shared_data.xml` (where ServiceLinks are stored). Check:
 - The `Distance` element — is it wildly larger than expected?
-- The first/last coordinate pairs in `gml:posList` — these are the from/to coordinates sent to OSRM
+- The first/last coordinate pairs in `gis:posList` — these are the from/to coordinates sent to OSRM
 - Compare with neighboring ServiceLinks (previous/next stop pairs) — are those reasonable?
 
 If the coordinates look correct but the distance is wrong, the problem is OSRM routing.
