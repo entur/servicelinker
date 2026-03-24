@@ -30,12 +30,19 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper/dists
-          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle/*.versions.toml') }}
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle.properties', '**/gradle-wrapper.properties', 'gradle/*.versions.toml') }}
           restore-keys: |
             gradle-
 
       - name: Build with Gradle
         run: ./gradlew --no-daemon build
+
+      - name: Cleanup Gradle cache
+        shell: bash
+        run: |
+          rm -f ~/.gradle/caches/journal-1/file-access.bin
+          rm -f ~/.gradle/caches/*/gc.properties
+          find ~/.gradle/caches -name "*.lock" -delete
 
       - name: Archive Build Artifacts
         if: success()
