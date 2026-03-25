@@ -1080,17 +1080,45 @@ class NetexProcessorTest {
     }
 
     @Test
-    fun `serviceLinks should use GML 3_2 namespace`() = runTest {
+    fun `serviceLinks should use GML 3_2 namespace with gis prefix`() = runTest {
         mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
         val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexInputStream())
         assertEquals(1, addedCount)
 
         val xmlString = String(processedXml, Charsets.UTF_8)
-        assertTrue(xmlString.contains("http://www.opengis.net/gml/3.2"),
-            "Output must declare GML 3.2 namespace")
-        assertFalse(xmlString.contains("xmlns:gml=\"http://www.opengis.net/gml\""),
-            "Output must not use old GML 2/3.1 namespace")
+        assertTrue(xmlString.contains("xmlns:gis=\"http://www.opengis.net/gml/3.2\""),
+            "Output must declare GML 3.2 namespace with gis prefix")
+        assertTrue(xmlString.contains("<gis:LineString"),
+            "New LineString elements must use gis prefix")
+        assertTrue(xmlString.contains("<gis:posList"),
+            "New posList elements must use gis prefix")
+    }
+
+    @Test
+    fun `gml prefix in input should be rewritten to gis`() = runTest {
+        // Input with gml: prefix (as some upstream sources produce)
+        val inputWithGml = String(getSampleNetexInputStream().readBytes(), Charsets.UTF_8)
+            .replace("xmlns:gis=", "xmlns:gml=")
+            .replace("gis:", "gml:")
+
+        assertTrue(inputWithGml.contains("xmlns:gml=\"http://www.opengis.net/gml/3.2\""),
+            "Test setup: input must use gml prefix")
+
+        mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
+        val (processedXml, _) = netexProcessor.processNetexFile(inputWithGml.byteInputStream())
+        val xmlString = String(processedXml, Charsets.UTF_8)
+
+        assertFalse(xmlString.contains("xmlns:gml="),
+            "Output must not contain xmlns:gml declaration")
+        assertFalse(xmlString.contains("<gml:"),
+            "Output must not contain gml: prefixed elements")
+        assertTrue(xmlString.contains("xmlns:gis=\"http://www.opengis.net/gml/3.2\""),
+            "Output must declare GML 3.2 namespace with gis prefix")
+        assertTrue(xmlString.contains("<gis:LineString"),
+            "Existing LineString elements must be rewritten to gis prefix")
+        assertTrue(xmlString.contains("<gis:posList"),
+            "Existing posList elements must be rewritten to gis prefix")
     }
 
     private fun parseXmlFromStream(inputStream: InputStream): Document {

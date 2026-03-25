@@ -119,7 +119,9 @@ class NetexProcessor(
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
         val builder = factory.newDocumentBuilder()
-        return builder.parse(inputStream)
+        val document = builder.parse(inputStream)
+        normalizeGmlPrefix(document.documentElement)
+        return document
     }
 
     fun extractStopAssignments(document: Document): Map<String, String> {
@@ -605,6 +607,26 @@ class NetexProcessor(
             "WATER" -> TransportMode.WATER
             "COACH" -> TransportMode.COACH
             else -> TransportMode.UNKNOWN
+        }
+    }
+
+    private fun normalizeGmlPrefix(element: Element) {
+        val document = element.ownerDocument
+        for (i in 0 until element.childNodes.length) {
+            val child = element.childNodes.item(i) as? Element ?: continue
+            if (child.namespaceURI == GML_NS && child.prefix != GML_PREFIX) {
+                document.renameNode(child, GML_NS, "$GML_PREFIX:${child.localName}")
+            }
+            for (j in 0 until child.attributes.length) {
+                val attr = child.attributes.item(j)
+                if (attr.namespaceURI == GML_NS && attr.prefix != GML_PREFIX) {
+                    document.renameNode(attr, GML_NS, "$GML_PREFIX:${attr.localName}")
+                }
+            }
+            normalizeGmlPrefix(child)
+        }
+        if (element.hasAttribute("xmlns:gml")) {
+            element.removeAttribute("xmlns:gml")
         }
     }
 

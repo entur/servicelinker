@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<PublicationDelivery xmlns="http://www.netex.org.uk/netex" xmlns:gml="http://www.opengis.net/gml/3.2" version="1.0">
+<PublicationDelivery xmlns="http://www.netex.org.uk/netex" xmlns:gis="http://www.opengis.net/gml/3.2" version="1.0">
     <PublicationTimestamp>2025-09-05T10:00:00Z</PublicationTimestamp>
     <ParticipantRef>FIN:Codespace:NSR</ParticipantRef>
     <dataObjects>
@@ -130,11 +130,11 @@
                             <projections>
                                 <LinkSequenceProjection version="2025100134951"
                                                         id="FIN:LinkSequenceProjection:32615444">
-                                    <gml:LineString srsName="4326" srsDimension="2" gml:id="LS_4839754">
-                                        <gml:posList count="554" srsDimension="2">70.986542 25.756629 70.986565
+                                    <gis:LineString srsName="4326" srsDimension="2" gis:id="LS_4839754">
+                                        <gis:posList count="554" srsDimension="2">70.986542 25.756629 70.986565
                                             25.756597
-                                        </gml:posList>
-                                    </gml:LineString>
+                                        </gis:posList>
+                                    </gis:LineString>
                                 </LinkSequenceProjection>
                             </projections>
                             <FromPointRef ref="FIN:ScheduledStopPoint:1" version="1"/>
