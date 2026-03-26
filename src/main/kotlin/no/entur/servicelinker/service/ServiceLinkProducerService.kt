@@ -178,13 +178,19 @@ class ServiceLinkProducerService(
             ZipOutputStream(outputBuffer).use { zos ->
                 var entry = zis.nextEntry
                 while (entry != null) {
+                    if (Thread.interrupted()) throw InterruptedException("Processing cancelled")
                     val entryData = zis.readBytes()
                     if (!entry.isDirectory && entry.name.endsWith(".xml", ignoreCase = true)) {
-                        logger.info("Processing XML entry: ${entry.name}")
                         val serviceLinksForFile = serviceLinksByFile[entry.name] ?: emptyList()
+                        logger.info("Processing XML entry: {} ({} bytes, {} links to inject)",
+                            entry.name, entryData.size, serviceLinksForFile.size)
+                        val entryStart = System.currentTimeMillis()
                         val (processedXml, addedCount) = netexProcessor.injectLinks(
                             entryData, serviceLinksForFile, allServiceLinks
                         )
+                        val entryMs = System.currentTimeMillis() - entryStart
+                        logger.info("Completed XML entry: {} in {}ms ({} bytes out, {} links added)",
+                            entry.name, entryMs, processedXml.size, addedCount)
                         totalAdded += addedCount
                         zos.putNextEntry(ZipEntry(entry.name))
                         zos.write(processedXml)

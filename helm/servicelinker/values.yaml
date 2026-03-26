@@ -10,12 +10,10 @@ common:
     internalPort: 8080  # What TCP port the application listens on the pod, must match the port in the Dockerfile
   deployment:
     prometheus:
-      enabled: true  # Set this to true only after you have setup a metrics endpoint
+      enabled: true
   container:
     image: <+artifacts.primary.image>  # The CD tool will replace this value with the actual image
-    cpu: 0.5 # Adjust this to your application needs
-    memory: 2048 # Adjust this to your application needs, a java application might need more memory to start like 1024 or 2048 or +++
+    cpu: 1.0 # DOM XML processing and G1 GC need headroom to avoid CFS throttling
+    memory: 2048 # This is request mem. Limit is 20% higher
   postgres: # sets up a postgres proxy so you can connect to your postgresql instance via localhost on the pod
     enabled: false
-    cpu: 0.1  # PostgreSQL Proxy setting, this usually is enough for most applications
-    memory: 32  # PostgreSQL Proxy setting, this usually is enough for most applications

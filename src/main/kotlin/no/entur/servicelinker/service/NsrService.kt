@@ -88,8 +88,7 @@ class NsrService(
 
     private fun parseCoordinateFromXml(xml: String): Coordinate? {
         return try {
-            val factory = DocumentBuilderFactory.newInstance()
-            val document = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml.toByteArray()))
+            val document = documentBuilderFactory.newDocumentBuilder().parse(ByteArrayInputStream(xml.toByteArray()))
 
             val centroid = document.getElementsByTagName("Centroid").item(0) as? Element ?: return null
             val location = centroid.getElementsByTagName("Location").item(0) as? Element ?: return null
@@ -116,4 +115,8 @@ class NsrService(
     }
 
     fun getCacheSize(): Long = coordinateCache.estimatedSize()
+
+    private companion object {
+        val documentBuilderFactory: DocumentBuilderFactory = DocumentBuilderFactory.newInstance()
+    }
 }

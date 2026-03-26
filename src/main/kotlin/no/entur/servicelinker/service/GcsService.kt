@@ -5,6 +5,10 @@ import com.google.cloud.storage.BlobInfo
 import com.google.cloud.storage.Storage
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 @Service
 class GcsService(
@@ -18,16 +22,34 @@ class GcsService(
         if (blob == null || !blob.exists()) {
             throw RuntimeException("File not found: gs://$bucket/$objectName")
         }
-        return blob.getContent()
+        val content = blob.getContent()
+        logger.info("Downloaded {} bytes from gs://{}/{}", content.size, bucket, objectName)
+        return content
     }
 
     fun uploadFile(content: ByteArray, bucket: String, objectName: String, contentType: String = "application/xml") {
-        logger.info("Uploading file to GCS: gs://$bucket/$objectName")
+        val sizeMb = content.size / (1024.0 * 1024.0)
+        logger.info("Uploading {} MB to GCS: gs://{}/{}", String.format("%.2f", sizeMb), bucket, objectName)
         val blobId = BlobId.of(bucket, objectName)
         val blobInfo = BlobInfo.newBuilder(blobId)
             .setContentType(contentType)
             .build()
-        storage.create(blobInfo, content)
-        logger.info("Successfully uploaded file to: gs://$bucket/$objectName")
+
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val future = executor.submit(Callable { storage.create(blobInfo, content) })
+            future.get(UPLOAD_TIMEOUT_MINUTES, TimeUnit.MINUTES)
+            logger.info("Successfully uploaded {} MB to gs://{}/{}", String.format("%.2f", sizeMb), bucket, objectName)
+        } catch (e: TimeoutException) {
+            throw RuntimeException(
+                "GCS upload timed out after $UPLOAD_TIMEOUT_MINUTES minutes for gs://$bucket/$objectName (${String.format("%.2f", sizeMb)} MB)", e
+            )
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    private companion object {
+        const val UPLOAD_TIMEOUT_MINUTES = 10L
     }
 }

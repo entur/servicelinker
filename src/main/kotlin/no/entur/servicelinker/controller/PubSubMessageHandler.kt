@@ -12,6 +12,10 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.integration.annotation.ServiceActivator
 import org.springframework.messaging.Message
 import org.springframework.stereotype.Component
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 @Component
 class PubSubMessageHandler(
@@ -41,6 +45,7 @@ class PubSubMessageHandler(
                 ?: throw IllegalArgumentException("Message missing 'RutebankenTargetFileHandle' attribute")
 
             logger.info("Received PubSub message: file={}, modesFilter={}", targetFileHandle, modesFilter)
+            val startTime = System.currentTimeMillis()
 
             MDC.put("stage", "outgoing/started")
             pubSubTemplate.publish(
@@ -53,8 +58,9 @@ class PubSubMessageHandler(
             MDC.put("stage", "processing")
             val addedCount = processWithRetry(inputBucket, targetFileHandle, modesFilter)
 
+            val elapsedSec = (System.currentTimeMillis() - startTime) / 1000.0
             MDC.put("stage", "outgoing/success")
-            logger.info("Processing complete, added {} ServiceLinks. Publishing SUCCESS status.", addedCount)
+            logger.info("Processing complete in {}s, added {} ServiceLinks. Publishing SUCCESS status.", String.format("%.1f", elapsedSec), addedCount)
 
             pubSubTemplate.publish(
                 outboundTopic,
@@ -69,7 +75,7 @@ class PubSubMessageHandler(
 
             acker?.ack()
             logger.info("Message acknowledged")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             MDC.put("stage", "outgoing/failed")
             logger.error("Failed to process PubSub message: {}", e.message, e)
             try {
@@ -82,7 +88,7 @@ class PubSubMessageHandler(
                     )
                 )
                 logger.info("Published FAILED status")
-            } catch (publishEx: Exception) {
+            } catch (publishEx: Throwable) {
                 logger.error("Failed to publish FAILED status: {}", publishEx.message)
             }
             acker?.ack()
@@ -95,21 +101,34 @@ class PubSubMessageHandler(
     private fun processWithRetry(bucketName: String, objectName: String, modesFilter: Set<String>?): Int {
         var lastException: Exception? = null
         repeat(MAX_RETRIES) { attempt ->
+            logger.info("Starting processing attempt ${attempt + 1}/$MAX_RETRIES for gs://$bucketName/$objectName")
+            val executor = Executors.newSingleThreadExecutor()
             try {
-                // MDCContext() captures the current MDC snapshot and restores it on each
-                // coroutine resumption. MDC.put("stage",...) calls inside suspend functions
-                // work as long as runBlocking executes on the calling thread (the default).
-                // If a dispatcher change is introduced, stage updates may be lost after
-                // suspension points — correlationId/codespace are unaffected.
-                return runBlocking(MDCContext()) {
-                    serviceLinkProducerService.processDataset(bucketName, objectName, modesFilter)
-                }
+                val mdcSnapshot = MDC.getCopyOfContextMap() ?: emptyMap()
+                val future = executor.submit(Callable {
+                    MDC.setContextMap(mdcSnapshot)
+                    try {
+                        runBlocking(MDCContext()) {
+                            serviceLinkProducerService.processDataset(bucketName, objectName, modesFilter)
+                        }
+                    } finally {
+                        MDC.clear()
+                    }
+                })
+                return future.get(PROCESSING_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            } catch (e: TimeoutException) {
+                // Don't retry timeouts — the same input will almost certainly time out again
+                throw RuntimeException(
+                    "Processing timed out after ${PROCESSING_TIMEOUT_MS / 1000}s for gs://$bucketName/$objectName", e
+                )
             } catch (e: Exception) {
                 lastException = e
                 logger.warn("Attempt ${attempt + 1}/$MAX_RETRIES failed for gs://$bucketName/$objectName: ${e.message}")
-                if (attempt < MAX_RETRIES - 1) {
-                    Thread.sleep(RETRY_DELAY_MS * (attempt + 1))
-                }
+            } finally {
+                executor.shutdownNow()
+            }
+            if (attempt < MAX_RETRIES - 1) {
+                Thread.sleep(RETRY_DELAY_MS * (attempt + 1))
             }
         }
         throw lastException ?: RuntimeException("Failed after $MAX_RETRIES attempts")
@@ -118,6 +137,7 @@ class PubSubMessageHandler(
     private companion object {
         const val MAX_RETRIES = 3
         const val RETRY_DELAY_MS = 2000L
+        const val PROCESSING_TIMEOUT_MS = 15 * 60 * 1000L // 15 minutes
 
         // Matches Constants.java in marduk
         const val LINKING_NETEX_FILE_STATUS_HEADER: String = "LinkingStatus"

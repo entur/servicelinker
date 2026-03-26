@@ -116,9 +116,7 @@ class NetexProcessor(
     }
 
     fun parseXmlDocument(inputStream: InputStream): Document {
-        val factory = DocumentBuilderFactory.newInstance()
-        factory.isNamespaceAware = true
-        val builder = factory.newDocumentBuilder()
+        val builder = documentBuilderFactory.newDocumentBuilder()
         val document = builder.parse(inputStream)
         normalizeGmlPrefix(document.documentElement)
         return document
@@ -486,7 +484,10 @@ class NetexProcessor(
         newServiceLinksForThisDoc: List<Pair<String, Pair<StationPair, OSRMRoute?>>>,
         allServiceLinks: Map<String, String>
     ): Pair<ByteArray, Int> {
+        var phaseStart = System.currentTimeMillis()
         val document = parseXmlDocument(ByteArrayInputStream(inputBytes))
+        logger.info("injectLinks: parsed XML in {}ms", System.currentTimeMillis() - phaseStart)
+
         val journeyPatterns = extractJourneyPatterns(document)
         val hasNewServiceLinks = newServiceLinksForThisDoc.isNotEmpty()
         val hasJourneyPatterns = journeyPatterns.isNotEmpty()
@@ -507,12 +508,19 @@ class NetexProcessor(
         }
 
         if (hasJourneyPatterns) {
+            phaseStart = System.currentTimeMillis()
             for ((jpElement, stopRefIds) in journeyPatterns) {
                 addLinksInSequence(document, jpElement, stopRefIds, allServiceLinks)
             }
+            logger.info("injectLinks: added linksInSequence to {} JPs in {}ms",
+                journeyPatterns.size, System.currentTimeMillis() - phaseStart)
         }
 
-        return Pair(documentToByteArray(document), newServiceLinksForThisDoc.size)
+        phaseStart = System.currentTimeMillis()
+        val bytes = documentToByteArray(document)
+        logger.info("injectLinks: serialized document in {}ms ({} bytes)",
+            System.currentTimeMillis() - phaseStart, bytes.size)
+        return Pair(bytes, newServiceLinksForThisDoc.size)
     }
 
     // --- Private helpers ---
@@ -638,7 +646,7 @@ class NetexProcessor(
     }
 
     private fun documentToByteArray(document: Document): ByteArray {
-        val transformer = TransformerFactory.newInstance().newTransformer()
+        val transformer = transformerFactory.newTransformer()
         val source = DOMSource(document)
         val outputStream = ByteArrayOutputStream()
         val result = StreamResult(outputStream)
@@ -647,6 +655,11 @@ class NetexProcessor(
     }
 
     companion object {
+        private val documentBuilderFactory: DocumentBuilderFactory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+        }
+        private val transformerFactory: TransformerFactory = TransformerFactory.newInstance()
+
         const val SRS_NAME_WGS84: String = "EPSG:4326"
 
         fun computeServiceLinkId(pair: StationPair): String {
