@@ -1,4 +1,4 @@
-FROM bellsoft/liberica-runtime-container:jre-25-slim
+FROM bellsoft/liberica-runtime-container:jre-25-slim-glibc
 
 WORKDIR /srv
 COPY build/libs/*.jar app.jar
