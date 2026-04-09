@@ -2,7 +2,11 @@ package no.entur.servicelinker.service
 
 import kotlinx.coroutines.CancellationException
 import no.entur.servicelinker.model.Coordinate
+import no.entur.servicelinker.model.ExistingSlijpInfo
+import no.entur.servicelinker.model.InjectionPlan
 import no.entur.servicelinker.model.OSRMRoute
+import no.entur.servicelinker.model.ServiceLinkData
+import no.entur.servicelinker.model.SlijpEntry
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.model.TransportMode
@@ -11,17 +15,14 @@ import org.springframework.stereotype.Service
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import javax.xml.parsers.DocumentBuilderFactory
-import javax.xml.transform.TransformerFactory
-import javax.xml.transform.dom.DOMSource
-import javax.xml.transform.stream.StreamResult
 
 
 @Service
 class NetexProcessor(
-    private val osrmService: OSRMService
+    private val osrmService: OSRMService,
+    private val staxTransformer: StaxNetexTransformer
 ) {
     private val logger = LoggerFactory.getLogger(NetexProcessor::class.java)
 
@@ -66,60 +67,37 @@ class NetexProcessor(
 
         // allServiceLinks: pairKey → serviceLinkId (existing + newly created)
         val allServiceLinks = existingServiceLinks.toMutableMap()
-        var addedCount = 0
 
-        // Build new ServiceLink elements, but only touch the document if we actually add any
-        val newServiceLinkElements = mutableListOf<Pair<String, Element>>()
-        for ((pairKey, pair) in neededPairs) {
-            if (modesFilter != null && !modesFilter.contains(pair.transportMode?.name)) {
-                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: mode ${pair.transportMode} not in filter $modesFilter")
-                continue
-            }
-            val route = try {
-                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.transportMode)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
-                null
-            }
-            if (route != null && route.distance > MAX_ROUTE_DISTANCE_METERS) {
-                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: route distance ${route.distance}m exceeds max")
-                continue
-            }
-            val serviceLinkElement = createServiceLinkElement(document, pair, route)
-            allServiceLinks[pairKey] = serviceLinkElement.getAttribute("id")
-            newServiceLinkElements.add(pairKey to serviceLinkElement)
-            addedCount++
-            if (limit != null && addedCount >= limit) {
-                logger.info("Reached ServiceLink limit ($limit), stopping early")
-                break
-            }
+        val routedPairs = routePairs(neededPairs, modesFilter, limit)
+        val newServiceLinkData = routedPairs.map { (pairKey, pairAndRoute) ->
+            val data = createServiceLinkData(pairAndRoute.first, pairAndRoute.second)
+            allServiceLinks[pairKey] = data.id
+            pairKey to data
         }
+        val addedCount = newServiceLinkData.size
 
         if (addedCount == 0) {
             logger.info("NeTEx processing completed. No service links to add")
             return Pair(inputBytes, 0)
         }
 
-        addServiceLinksSection(document, newServiceLinkElements)
+        val plan = buildInjectionPlan(
+            newServiceLinkData = newServiceLinkData,
+            allServiceLinks = allServiceLinks,
+            jpStopSequences = journeyPatterns.associate { (jp, refs) -> jp.getAttribute("id") to refs },
+            existingSlijpEntries = collectExistingSlijpEntries(document),
+            declaredStopIds = extractScheduledStopPointIdsAndVersions(document).keys,
+            needsGmlNamespace = true
+        )
 
-        // Add linksInSequence to each JourneyPattern
-        for ((jpElement, stopRefIds) in journeyPatterns) {
-            addLinksInSequence(document, jpElement, stopRefIds, allServiceLinks)
-        }
-
-        ensureGmlNamespace(document)
-        val modifiedXml = documentToByteArray(document)
+        val modifiedXml = staxTransformer.transform(inputBytes, plan)
         logger.info("NeTEx processing completed. Added $addedCount service links")
         return Pair(modifiedXml, addedCount)
     }
 
     fun parseXmlDocument(inputStream: InputStream): Document {
         val builder = documentBuilderFactory.newDocumentBuilder()
-        val document = builder.parse(inputStream)
-        normalizeGmlPrefix(document.documentElement)
-        return document
+        return builder.parse(inputStream)
     }
 
     fun extractStopAssignments(document: Document): Map<String, String> {
@@ -269,108 +247,116 @@ class NetexProcessor(
         return result
     }
 
-    private fun addLinksInSequence(
-        document: Document,
-        jpElement: Element,
-        stopRefIds: List<String>,
-        allServiceLinks: Map<String, String>
-    ) {
-        val codespace = jpElement.getAttribute("id").split(":").firstOrNull() ?: return
+    // --- Public helpers for multi-file ZIP processing ---
 
-        // Index existing ServiceLinkInJourneyPattern entries by their ServiceLinkRef
-        val existingLinksInSeqElement = jpElement.getElementsByTagName("linksInSequence").let { nodes ->
-            (0 until nodes.length).map { nodes.item(it) }.firstOrNull { it.parentNode == jpElement } as? Element
+    /** Return all ScheduledStopPoint IDs and their versions declared in the document. */
+    fun extractScheduledStopPointIdsAndVersions(document: Document): Map<String, String> {
+        val ids = mutableMapOf<String, String>()
+        val elements = document.getElementsByTagName("ScheduledStopPoint")
+        for (i in 0 until elements.length) {
+            val el = elements.item(i) as Element
+            val id = el.getAttribute("id")
+            val version = el.getAttribute("version").ifBlank { "1" }
+            if (id.isNotBlank()) ids[id] = version
         }
-        val existingByServiceLinkId = mutableMapOf<String, Element>()
-        if (existingLinksInSeqElement != null) {
-            val slijps = existingLinksInSeqElement.getElementsByTagName("ServiceLinkInJourneyPattern")
-            for (i in 0 until slijps.length) {
-                val slijp = slijps.item(i) as Element
-                val ref = (slijp.getElementsByTagName("ServiceLinkRef").item(0) as? Element)
-                    ?.getAttribute("ref")
-                if (ref != null) {
-                    existingByServiceLinkId[ref] = slijp
-                }
-            }
-        }
-
-        // Build new linksInSequence: reuse existing entries, create new ones for missing pairs
-        val linksInSequence = document.createElement("linksInSequence")
-        var order = 1
-
-        for (i in 0 until stopRefIds.size - 1) {
-            val fromRef = stopRefIds[i]
-            val toRef = stopRefIds[i + 1]
-            val pairKey = "${fromRef}_${toRef}"
-            val serviceLinkId = allServiceLinks[pairKey] ?: continue
-
-            val existing = existingByServiceLinkId[serviceLinkId]
-            if (existing != null) {
-                // Reuse existing entry, just update the order
-                val imported = document.importNode(existing, true) as Element
-                imported.setAttribute("order", order.toString())
-                linksInSequence.appendChild(imported)
-            } else {
-                val jpLocalId = jpElement.getAttribute("id").split(":").lastOrNull() ?: ""
-                val fromLocalId = fromRef.split(":").lastOrNull() ?: fromRef
-                val toLocalId = toRef.split(":").lastOrNull() ?: toRef
-                val slijpId = "$codespace:ServiceLinkInJourneyPattern:${jpLocalId}_${fromLocalId}_to_${toLocalId}"
-
-                val slijpElement = document.createElement("ServiceLinkInJourneyPattern")
-                slijpElement.setAttribute("id", slijpId)
-                slijpElement.setAttribute("version", "1")
-                slijpElement.setAttribute("order", order.toString())
-
-                val serviceLinkRef = document.createElement("ServiceLinkRef")
-                serviceLinkRef.setAttribute("ref", serviceLinkId)
-                // No version attribute: NeTEx identity constraints require all key fields to be
-                // non-null. Omitting version prevents ServiceLink_KeyRef from firing on
-                // cross-file references (ServiceLink in shared_data, JP in line file).
-                slijpElement.appendChild(serviceLinkRef)
-
-                linksInSequence.appendChild(slijpElement)
-            }
-            order++
-        }
-
-        // Replace old linksInSequence with the merged one
-        if (existingLinksInSeqElement != null) {
-            jpElement.removeChild(existingLinksInSeqElement)
-        }
-        if (linksInSequence.hasChildNodes()) {
-            jpElement.appendChild(linksInSequence)
-        }
+        return ids
     }
 
-    private fun createServiceLinkElement(document: Document, pair: StationPair, route: OSRMRoute?): Element {
-        val fromParts = pair.from.id.split(":")
-        val toParts = pair.to.id.split(":")
-        val tariffZone = fromParts.first()
-        val fromId = fromParts.lastOrNull() ?: pair.from.id
-        val toId = toParts.lastOrNull() ?: pair.to.id
-        val version = "1"
-        val timestamp =
-            java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(java.time.LocalDateTime.now())
-        val serviceLinkId = computeServiceLinkId(pair)
-        val linkSequenceProjectionId = "$tariffZone:LinkSequenceProjection:${timestamp}_${fromId}_${toId}"
-
-        val serviceLinkElement = document.createElement("ServiceLink")
-        serviceLinkElement.setAttribute("id", serviceLinkId)
-        serviceLinkElement.setAttribute("version", version)
-
-        if (route?.distance != null) {
-            val distanceElement = document.createElement("Distance")
-            distanceElement.textContent = route.distance.toInt().toString()
-            serviceLinkElement.appendChild(distanceElement)
+    /** Collect raw JP pair refs (stop IDs + transport mode) without requiring enriched coordinates. */
+    fun collectJpPairRefs(document: Document): Map<String, Triple<String, String, TransportMode?>> {
+        val journeyPatterns = extractJourneyPatterns(document)
+        val jpModeMap = buildJpModeMap(document)
+        val result = mutableMapOf<String, Triple<String, String, TransportMode?>>()
+        for ((jpElement, stopRefIds) in journeyPatterns) {
+            val jpMode = jpModeMap[jpElement.getAttribute("id")]
+            for (i in 0 until stopRefIds.size - 1) {
+                val fromRef = stopRefIds[i]
+                val toRef = stopRefIds[i + 1]
+                result.putIfAbsent("${fromRef}_${toRef}", Triple(fromRef, toRef, jpMode))
+            }
         }
+        return result
+    }
 
-        val projectionsElement = document.createElement("projections")
-        val linkSequenceProjection = document.createElement("LinkSequenceProjection")
-        linkSequenceProjection.setAttribute("id", linkSequenceProjectionId)
-        linkSequenceProjection.setAttribute("version", "1")
-        val gmlLineString = document.createElementNS(GML_NS, "${GML_PREFIX}:LineString")
-        gmlLineString.setAttribute("srsName", SRS_NAME_WGS84)
-        gmlLineString.setAttributeNS(GML_NS, "${GML_PREFIX}:id", "lsp_${fromId}_${toId}")
+    /** Extract ordered stop sequences per JourneyPattern. Key = JP id. */
+    fun collectJpStopSequences(document: Document): Map<String, List<String>> =
+        extractJourneyPatterns(document).associate { (jp, refs) -> jp.getAttribute("id") to refs }
+
+    /** Extract existing ServiceLinkInJourneyPattern metadata per JP. */
+    fun collectExistingSlijpEntries(document: Document): Map<String, Map<String, ExistingSlijpInfo>> {
+        val result = mutableMapOf<String, Map<String, ExistingSlijpInfo>>()
+        val journeyPatterns = document.getElementsByTagName("JourneyPattern")
+        for (i in 0 until journeyPatterns.length) {
+            val jp = journeyPatterns.item(i) as Element
+            val jpId = jp.getAttribute("id")
+
+            val linksInSeq = jp.getElementsByTagName("linksInSequence").let { nodes ->
+                (0 until nodes.length).map { nodes.item(it) }.firstOrNull { it.parentNode == jp } as? Element
+            } ?: continue
+
+            val slijps = linksInSeq.getElementsByTagName("ServiceLinkInJourneyPattern")
+            val entries = mutableMapOf<String, ExistingSlijpInfo>()
+            for (j in 0 until slijps.length) {
+                val slijp = slijps.item(j) as Element
+                val ref = (slijp.getElementsByTagName("ServiceLinkRef").item(0) as? Element) ?: continue
+                val serviceLinkRef = ref.getAttribute("ref")
+                val refVersion = ref.getAttribute("version").takeIf { it.isNotBlank() }
+                entries[serviceLinkRef] = ExistingSlijpInfo(
+                    id = slijp.getAttribute("id"),
+                    version = slijp.getAttribute("version").ifBlank { "1" },
+                    serviceLinkRefVersion = refVersion
+                )
+            }
+            if (entries.isNotEmpty()) {
+                result[jpId] = entries
+            }
+        }
+        return result
+    }
+
+    /** Route stop pairs via OSRM, applying mode filter and distance/limit constraints. */
+    suspend fun routePairs(
+        pairs: Map<String, StationPair>,
+        modesFilter: Set<String>?,
+        limit: Int?
+    ): LinkedHashMap<String, Pair<StationPair, OSRMRoute?>> {
+        val result = linkedMapOf<String, Pair<StationPair, OSRMRoute?>>()
+        var remaining = limit
+        for ((pairKey, pair) in pairs) {
+            if (remaining != null && remaining <= 0) break
+            if (modesFilter != null && !modesFilter.contains(pair.transportMode?.name)) {
+                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: mode ${pair.transportMode} not in filter $modesFilter")
+                continue
+            }
+            val route = try {
+                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.transportMode)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
+                null
+            }
+            if (route != null && route.distance > MAX_ROUTE_DISTANCE_METERS) {
+                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: distance ${route.distance}m exceeds max")
+                continue
+            }
+            result[pairKey] = pair to route
+            if (remaining != null) remaining = (remaining - 1).coerceAtLeast(0)
+        }
+        return result
+    }
+
+    /** Apply a pre-built InjectionPlan to raw XML bytes via StAX streaming. */
+    fun applyPlan(input: ByteArray, plan: InjectionPlan): ByteArray =
+        staxTransformer.transform(input, plan)
+
+    /** Create a ServiceLinkData object from a routed stop pair. Pure data, no DOM. */
+    fun createServiceLinkData(pair: StationPair, route: OSRMRoute?): ServiceLinkData {
+        val (codespace, fromId) = splitNetexId(pair.from.id)
+        val (_, toId) = splitNetexId(pair.to.id)
+        val timestamp = TIMESTAMP_FORMAT.format(java.time.LocalDateTime.now())
+        val serviceLinkId = computeServiceLinkId(pair)
+
         val fromCoord = listOf(pair.from.coordinate.longitude, pair.from.coordinate.latitude)
         val toCoord = listOf(pair.to.coordinate.longitude, pair.to.coordinate.latitude)
         val coordinates = if (route != null) {
@@ -382,27 +368,113 @@ class NetexProcessor(
             listOf(fromCoord, toCoord)
         }
         val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
-        val posList = document.createElementNS(GML_NS, "${GML_PREFIX}:posList")
-        posList.textContent = posListString
-        gmlLineString.appendChild(posList)
-        linkSequenceProjection.appendChild(gmlLineString)
-        projectionsElement.appendChild(linkSequenceProjection)
-        serviceLinkElement.appendChild(projectionsElement)
 
-        val fromPointRef = document.createElement("FromPointRef")
-        fromPointRef.setAttribute("ref", pair.from.id)
-        // Use the stop's actual version to match ScheduledStopPoint_KeyRef constraint.
-        // Source data may use timestamp-based versions (e.g. "20260212093839") instead of "1".
-        fromPointRef.setAttribute("version", pair.from.version ?: version)
-        serviceLinkElement.appendChild(fromPointRef)
-
-        val toPointRef = document.createElement("ToPointRef")
-        toPointRef.setAttribute("ref", pair.to.id)
-        toPointRef.setAttribute("version", pair.to.version ?: version)
-        serviceLinkElement.appendChild(toPointRef)
-
-        return serviceLinkElement
+        return ServiceLinkData(
+            id = serviceLinkId,
+            version = "1",
+            distance = route?.distance?.toInt(),
+            projectionId = "$codespace:LinkSequenceProjection:${timestamp}_${fromId}_${toId}",
+            gmlLineStringId = "lsp_${fromId}_${toId}",
+            posList = posListString,
+            fromPointRef = pair.from.id,
+            fromPointVersion = pair.from.version ?: "1",
+            toPointRef = pair.to.id,
+            toPointVersion = pair.to.version ?: "1"
+        )
     }
+
+    /** Build an InjectionPlan that captures all modifications for a single file. */
+    fun buildInjectionPlan(
+        newServiceLinkData: List<Pair<String, ServiceLinkData>>,
+        allServiceLinks: Map<String, String>,
+        jpStopSequences: Map<String, List<String>>,
+        existingSlijpEntries: Map<String, Map<String, ExistingSlijpInfo>>,
+        declaredStopIds: Set<String>,
+        needsGmlNamespace: Boolean
+    ): InjectionPlan {
+        // Stub stops: referenced by new ServiceLinks but not declared in this file
+        val referencedStops = mutableMapOf<String, String>()
+        for ((_, data) in newServiceLinkData) {
+            referencedStops[data.fromPointRef] = data.fromPointVersion
+            referencedStops[data.toPointRef] = data.toPointVersion
+        }
+        val stubStops = referencedStops.filterKeys { it !in declaredStopIds }
+
+        // Per-JP merged linksInSequence
+        val jpLinks = mutableMapOf<String, List<SlijpEntry>>()
+        for ((jpId, stopRefIds) in jpStopSequences) {
+            val existing = existingSlijpEntries[jpId] ?: emptyMap()
+            val entries = mutableListOf<SlijpEntry>()
+            var order = 1
+            val codespace = jpId.split(":").firstOrNull() ?: continue
+            val jpLocalId = jpId.split(":").lastOrNull() ?: ""
+
+            for (i in 0 until stopRefIds.size - 1) {
+                val fromRef = stopRefIds[i]
+                val toRef = stopRefIds[i + 1]
+                val pairKey = "${fromRef}_${toRef}"
+                val serviceLinkId = allServiceLinks[pairKey] ?: continue
+
+                val existingEntry = existing[serviceLinkId]
+                if (existingEntry != null) {
+                    entries.add(
+                        SlijpEntry(
+                            id = existingEntry.id,
+                            version = existingEntry.version,
+                            order = order,
+                            serviceLinkRef = serviceLinkId,
+                            serviceLinkRefVersion = existingEntry.serviceLinkRefVersion
+                        )
+                    )
+                } else {
+                    val fromLocalId = fromRef.split(":").lastOrNull() ?: fromRef
+                    val toLocalId = toRef.split(":").lastOrNull() ?: toRef
+                    val slijpId = "$codespace:ServiceLinkInJourneyPattern:${jpLocalId}_${fromLocalId}_to_${toLocalId}"
+                    entries.add(
+                        SlijpEntry(
+                            id = slijpId,
+                            version = "1",
+                            order = order,
+                            serviceLinkRef = serviceLinkId,
+                            serviceLinkRefVersion = null
+                        )
+                    )
+                }
+                order++
+            }
+            if (entries.isNotEmpty()) {
+                jpLinks[jpId] = entries
+            }
+        }
+
+        return InjectionPlan(
+            newServiceLinks = newServiceLinkData.map { it.second },
+            stubScheduledStopPoints = stubStops,
+            journeyPatternLinks = jpLinks,
+            needsGmlNamespace = needsGmlNamespace
+        )
+    }
+
+    /** Build an InjectionPlan for a ZIP file entry using pre-routed data. */
+    fun buildZipInjectionPlan(
+        newServiceLinksForThisDoc: List<Pair<String, Pair<StationPair, OSRMRoute?>>>,
+        allServiceLinks: Map<String, String>,
+        jpStopSequences: Map<String, List<String>>,
+        existingSlijpEntries: Map<String, Map<String, ExistingSlijpInfo>>,
+        declaredStopIds: Set<String>
+    ): InjectionPlan {
+        val newData = newServiceLinksForThisDoc.map { (pairKey, pairAndRoute) ->
+            val (pair, route) = pairAndRoute
+            pairKey to createServiceLinkData(pair, route)
+        }
+        return buildInjectionPlan(
+            newData, allServiceLinks, jpStopSequences,
+            existingSlijpEntries, declaredStopIds,
+            needsGmlNamespace = newData.isNotEmpty()
+        )
+    }
+
+    // --- Private helpers ---
 
     private fun buildJpModeMap(document: Document): Map<String, TransportMode?> {
         // lineId → TransportMode
@@ -443,164 +515,6 @@ class NetexProcessor(
         return result
     }
 
-    // --- Public helpers for multi-file ZIP processing ---
-
-    /** Return all ScheduledStopPoint IDs and their versions declared in the document,
-     *  regardless of whether they have inline coordinates.
-     *  Used to populate the stopDeclarationFile map and stop version map in ZIP processing. */
-    fun extractScheduledStopPointIdsAndVersions(document: Document): Map<String, String> {
-        val ids = mutableMapOf<String, String>()
-        val elements = document.getElementsByTagName("ScheduledStopPoint")
-        for (i in 0 until elements.length) {
-            val el = elements.item(i) as Element
-            val id = el.getAttribute("id")
-            val version = el.getAttribute("version").ifBlank { "1" }
-            if (id.isNotBlank()) ids[id] = version
-        }
-        return ids
-    }
-
-    /** Collect raw JP pair refs (stop IDs + transport mode) without requiring enriched coordinates.
-     *  Used by the ZIP planning pass so stop-collection and JP-scanning can share one ZIP read. */
-    fun collectJpPairRefs(document: Document): Map<String, Triple<String, String, TransportMode?>> {
-        val journeyPatterns = extractJourneyPatterns(document)
-        val jpModeMap = buildJpModeMap(document)
-        val result = mutableMapOf<String, Triple<String, String, TransportMode?>>()
-        for ((jpElement, stopRefIds) in journeyPatterns) {
-            val jpMode = jpModeMap[jpElement.getAttribute("id")]
-            for (i in 0 until stopRefIds.size - 1) {
-                val fromRef = stopRefIds[i]
-                val toRef = stopRefIds[i + 1]
-                result.putIfAbsent("${fromRef}_${toRef}", Triple(fromRef, toRef, jpMode))
-            }
-        }
-        return result
-    }
-
-    /** Inject pre-routed ServiceLinks and linksInSequence into a document.
-     *  Used by multi-file ZIP processing where OSRM routing is done globally. */
-    fun injectLinks(
-        inputBytes: ByteArray,
-        newServiceLinksForThisDoc: List<Pair<String, Pair<StationPair, OSRMRoute?>>>,
-        allServiceLinks: Map<String, String>
-    ): Pair<ByteArray, Int> {
-        var phaseStart = System.currentTimeMillis()
-        val document = parseXmlDocument(ByteArrayInputStream(inputBytes))
-        logger.info("injectLinks: parsed XML in {}ms", System.currentTimeMillis() - phaseStart)
-
-        val journeyPatterns = extractJourneyPatterns(document)
-        val hasNewServiceLinks = newServiceLinksForThisDoc.isNotEmpty()
-        val hasJourneyPatterns = journeyPatterns.isNotEmpty()
-
-        if (!hasNewServiceLinks && (!hasJourneyPatterns || allServiceLinks.isEmpty())) {
-            return Pair(inputBytes, 0)
-        }
-
-        if (hasNewServiceLinks) {
-            val newServiceLinkElements = newServiceLinksForThisDoc.map { (pairKey, pairAndRoute) ->
-                val (pair, route) = pairAndRoute
-                pairKey to createServiceLinkElement(document, pair, route)
-            }
-            addServiceLinksSection(document, newServiceLinkElements)
-            ensureGmlNamespace(document)
-            ensureReferencedStopsDeclared(document, newServiceLinksForThisDoc)
-            logger.info("Injected ${newServiceLinkElements.size} new ServiceLink(s)")
-        }
-
-        if (hasJourneyPatterns) {
-            phaseStart = System.currentTimeMillis()
-            for ((jpElement, stopRefIds) in journeyPatterns) {
-                addLinksInSequence(document, jpElement, stopRefIds, allServiceLinks)
-            }
-            logger.info("injectLinks: added linksInSequence to {} JPs in {}ms",
-                journeyPatterns.size, System.currentTimeMillis() - phaseStart)
-        }
-
-        phaseStart = System.currentTimeMillis()
-        val bytes = documentToByteArray(document)
-        logger.info("injectLinks: serialized document in {}ms ({} bytes)",
-            System.currentTimeMillis() - phaseStart, bytes.size)
-        return Pair(bytes, newServiceLinksForThisDoc.size)
-    }
-
-    // --- Private helpers ---
-
-    private fun addServiceLinksSection(document: Document, newServiceLinkElements: List<Pair<String, Element>>) {
-        var serviceLinksSection = document.getElementsByTagName("serviceLinks").item(0) as? Element
-        if (serviceLinksSection == null) {
-            val serviceFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
-                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
-                ?: document.documentElement
-            serviceLinksSection = document.createElement("serviceLinks")
-            // serviceLinks must precede journeyPatterns and other later elements in the NeTEx schema
-            val insertionPoint = serviceFrame.childNodes.let { nodes ->
-                (0 until nodes.length).asSequence().map { nodes.item(it) }
-                    .firstOrNull { it is Element && it.localName in AFTER_SERVICE_LINKS }
-            }
-            if (insertionPoint != null) {
-                serviceFrame.insertBefore(serviceLinksSection, insertionPoint)
-            } else {
-                serviceFrame.appendChild(serviceLinksSection)
-            }
-        }
-        for ((_, element) in newServiceLinkElements) {
-            serviceLinksSection.appendChild(element)
-        }
-    }
-
-    /** Ensure every ScheduledStopPoint referenced by new ServiceLinks is declared in the document.
-     *  If a stop is missing (e.g. declared only in another file in the ZIP), inject a minimal stub
-     *  so that NeTEx ScheduledStopPoint_KeyRef validation passes. */
-    private fun ensureReferencedStopsDeclared(
-        document: Document,
-        newServiceLinks: List<Pair<String, Pair<StationPair, OSRMRoute?>>>
-    ) {
-        val declaredIds = extractScheduledStopPointIdsAndVersions(document).keys
-        val referencedStops = mutableMapOf<String, String>()
-        for ((_, pairAndRoute) in newServiceLinks) {
-            val (pair, _) = pairAndRoute
-            referencedStops[pair.from.id] = pair.from.version ?: "1"
-            referencedStops[pair.to.id] = pair.to.version ?: "1"
-        }
-        val missing = referencedStops.filterKeys { it !in declaredIds }
-        if (missing.isEmpty()) return
-
-        // Find or create the scheduledStopPoints container in the ServiceFrame
-        var container = document.getElementsByTagName("scheduledStopPoints").item(0) as? Element
-        if (container == null) {
-            val serviceFrame = document.getElementsByTagName("ServiceFrame").item(0) as? Element
-                ?: document.getElementsByTagName("CompositeFrame").item(0) as? Element
-                ?: document.documentElement
-            container = document.createElement("scheduledStopPoints")
-            // scheduledStopPoints must precede serviceLinks in NeTEx schema order
-            val insertionPoint = serviceFrame.childNodes.let { nodes ->
-                (0 until nodes.length).asSequence().map { nodes.item(it) }
-                    .firstOrNull { it is Element && it.localName in AFTER_SCHEDULED_STOP_POINTS }
-            }
-            if (insertionPoint != null) {
-                serviceFrame.insertBefore(container, insertionPoint)
-            } else {
-                serviceFrame.appendChild(container)
-            }
-        }
-
-        for ((stopId, stopVersion) in missing) {
-            val stub = document.createElement("ScheduledStopPoint")
-            stub.setAttribute("id", stopId)
-            stub.setAttribute("version", stopVersion)
-            container.appendChild(stub)
-        }
-        logger.info("Added ${missing.size} stub ScheduledStopPoint declaration(s) for cross-file ServiceLink references")
-    }
-
-    private fun ensureGmlNamespace(document: Document) {
-        val root = document.documentElement
-        val existing = root.getAttribute("xmlns:${GML_PREFIX}")
-        if (existing != GML_NS) {
-            root.setAttribute("xmlns:${GML_PREFIX}", GML_NS)
-        }
-    }
-
     private fun extractTransportMode(element: Element): TransportMode? {
         val transportModeText = getElementText(element, "TransportMode")
             ?: getElementText(element, "VehicleMode")
@@ -618,26 +532,6 @@ class NetexProcessor(
         }
     }
 
-    private fun normalizeGmlPrefix(element: Element) {
-        val document = element.ownerDocument
-        for (i in 0 until element.childNodes.length) {
-            val child = element.childNodes.item(i) as? Element ?: continue
-            if (child.namespaceURI == GML_NS && child.prefix != GML_PREFIX) {
-                document.renameNode(child, GML_NS, "$GML_PREFIX:${child.localName}")
-            }
-            for (j in 0 until child.attributes.length) {
-                val attr = child.attributes.item(j)
-                if (attr.namespaceURI == GML_NS && attr.prefix != GML_PREFIX) {
-                    document.renameNode(attr, GML_NS, "$GML_PREFIX:${attr.localName}")
-                }
-            }
-            normalizeGmlPrefix(child)
-        }
-        if (element.hasAttribute("xmlns:gml")) {
-            element.removeAttribute("xmlns:gml")
-        }
-    }
-
     private fun getElementText(parent: Element, tagName: String): String? {
         val elements = parent.getElementsByTagName(tagName)
         return if (elements.length > 0) {
@@ -645,50 +539,27 @@ class NetexProcessor(
         } else null
     }
 
-    private fun documentToByteArray(document: Document): ByteArray {
-        val transformer = transformerFactory.newTransformer()
-        val source = DOMSource(document)
-        val outputStream = ByteArrayOutputStream()
-        val result = StreamResult(outputStream)
-        transformer.transform(source, result)
-        return outputStream.toByteArray()
-    }
-
     companion object {
+        // Created per-call via newDocumentBuilder() — the factory is not guaranteed thread-safe
         private val documentBuilderFactory: DocumentBuilderFactory = DocumentBuilderFactory.newInstance().apply {
             isNamespaceAware = true
         }
-        private val transformerFactory: TransformerFactory = TransformerFactory.newInstance()
 
-        const val SRS_NAME_WGS84: String = "EPSG:4326"
+        private val TIMESTAMP_FORMAT: java.time.format.DateTimeFormatter =
+            java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
 
         fun computeServiceLinkId(pair: StationPair): String {
-            val fromParts = pair.from.id.split(":")
-            val toParts = pair.to.id.split(":")
-            val tariffZone = fromParts.first()
-            val fromId = fromParts.lastOrNull() ?: pair.from.id
-            val toId = toParts.lastOrNull() ?: pair.to.id
-            return "$tariffZone:ServiceLink:$fromId-$toId"
+            val (codespace, fromId) = splitNetexId(pair.from.id)
+            val (_, toId) = splitNetexId(pair.to.id)
+            return "$codespace:ServiceLink:$fromId-$toId"
         }
+
+        /** Split a NeTEx ID like "FIN:ServiceLink:42" into (codespace, localId). */
+        fun splitNetexId(id: String): Pair<String, String> {
+            val parts = id.split(":")
+            return parts.first() to (parts.lastOrNull() ?: id)
+        }
+
         const val MAX_ROUTE_DISTANCE_METERS = 5_000_000 // 5000 km — sanity limit
-        const val GML_NS = "http://www.opengis.net/gml/3.2"
-        const val GML_PREFIX = "gis"
-
-        // NeTEx ServiceFrame elements that must appear after <scheduledStopPoints> in schema order
-        val AFTER_SCHEDULED_STOP_POINTS = setOf(
-            "serviceLinks", "servicePatterns", "routeLinks", "routePoints", "routes",
-            "journeyPatterns", "stopAssignments", "connections",
-            "timingPoints", "timingLinks", "tariffZones",
-        )
-
-        // NeTEx ServiceFrame elements that must appear after <serviceLinks> in schema order
-        val AFTER_SERVICE_LINKS = setOf(
-            "journeyPatterns", "stopAssignments", "connections",
-            "timingPoints", "timingLinks", "tariffZones",
-            "routingConstraintZones", "transferRestrictions", "serviceExclusions",
-            "timeDemandTypes", "timeDemandTypeAssignments", "timingLinkGroups",
-            "notices", "noticeAssignments", "logicalDisplays",
-            "displayAssignments", "passengerInformationEquipments"
-        )
     }
 }

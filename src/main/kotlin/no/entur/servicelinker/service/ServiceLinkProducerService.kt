@@ -2,6 +2,7 @@ package no.entur.servicelinker.service
 
 import kotlinx.coroutines.CancellationException
 import no.entur.servicelinker.model.DirectProcessingResult
+import no.entur.servicelinker.model.ExistingSlijpInfo
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
@@ -65,7 +66,7 @@ class ServiceLinkProducerService(
 
     private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> {
         // PASS 1: Collect stops, assignments, stopDeclarationFile, existing service links,
-        //         and raw JP pair refs (stop IDs only — coordinates not needed yet).
+        //         JP stop sequences, existing SLIJP entries, and raw JP pair refs.
         MDC.put("stage", "processing/parse")
         val allStopPoints = mutableMapOf<String, StopPoint>()
         val allStopAssignments = mutableMapOf<String, String>()
@@ -74,6 +75,11 @@ class ServiceLinkProducerService(
         val existingServiceLinksGlobal = mutableMapOf<String, String>()
         val rawPairRefs = mutableMapOf<String, Triple<String, String, TransportMode?>>()
         var firstXmlFile: String? = null
+
+        // Per-file data needed for plan building (avoids re-parsing in Pass 2)
+        val jpStopSequencesByFile = mutableMapOf<String, Map<String, List<String>>>()
+        val existingSlijpByFile = mutableMapOf<String, Map<String, Map<String, ExistingSlijpInfo>>>()
+        val declaredStopIdsByFile = mutableMapOf<String, Set<String>>()
 
         ZipInputStream(ByteArrayInputStream(zipData)).use { zis ->
             var entry = zis.nextEntry
@@ -87,9 +93,6 @@ class ServiceLinkProducerService(
                         val assignments = netexProcessor.extractStopAssignments(document)
                         allStopPoints.putAll(stops)
                         allStopAssignments.putAll(assignments)
-                        // Record ALL declared ScheduledStopPoint IDs and versions (not just those
-                        // with inline coordinates) so ServiceLinks are routed to the correct file
-                        // and references use the correct version.
                         val declaredIdsAndVersions = netexProcessor.extractScheduledStopPointIdsAndVersions(document)
                         logger.debug("Pass 1 {}: {} ScheduledStopPoint IDs declared, {} with inline coords",
                             entry.name, declaredIdsAndVersions.size, stops.size)
@@ -99,6 +102,13 @@ class ServiceLinkProducerService(
                         }
                         existingServiceLinksGlobal.putAll(netexProcessor.extractExistingServiceLinks(document))
                         netexProcessor.collectJpPairRefs(document).forEach { (k, v) -> rawPairRefs.putIfAbsent(k, v) }
+
+                        // Collect per-file data for StAX injection plans
+                        jpStopSequencesByFile[entry.name] = netexProcessor.collectJpStopSequences(document)
+                        existingSlijpByFile[entry.name] = netexProcessor.collectExistingSlijpEntries(document)
+                        declaredStopIdsByFile[entry.name] = declaredIdsAndVersions.keys
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         logger.warn("Pass 1 failed for ${entry.name}: ${e.message}")
                     }
@@ -130,35 +140,14 @@ class ServiceLinkProducerService(
         // ROUTE all pairs via OSRM globally
         MDC.put("stage", "processing/route")
         val allServiceLinks = existingServiceLinksGlobal.toMutableMap()
-        val routedPairs = linkedMapOf<String, Pair<StationPair, OSRMRoute?>>()
-        var remaining = limit
-
-        for ((pairKey, pair) in allNeededPairs) {
-            if (remaining != null && remaining <= 0) break
-            if (modesFilter != null && !modesFilter.contains(pair.transportMode?.name)) {
-                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: mode ${pair.transportMode} not in filter $modesFilter")
-                continue
-            }
-            val route = try {
-                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.transportMode)
-            } catch (e: CancellationException) { throw e } catch (_: Exception) {
-                logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
-                null
-            }
-            if (route != null && route.distance > NetexProcessor.MAX_ROUTE_DISTANCE_METERS) {
-                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: distance ${route.distance}m exceeds max")
-                continue
-            }
-            val serviceLinkId = NetexProcessor.computeServiceLinkId(pair)
-            allServiceLinks[pairKey] = serviceLinkId
-            routedPairs[pairKey] = pair to route
-            if (remaining != null) remaining = (remaining - 1).coerceAtLeast(0)
+        val routedPairs = netexProcessor.routePairs(allNeededPairs, modesFilter, limit)
+        for ((pairKey, pairAndRoute) in routedPairs) {
+            allServiceLinks[pairKey] = NetexProcessor.computeServiceLinkId(pairAndRoute.first)
         }
 
         logger.info("ZIP routing: ${routedPairs.size} new service links routed")
 
         // Assign each ServiceLink to the file that declares its from-stop's ScheduledStopPoint.
-        // This ensures ServiceLink FromPointRef/ToPointRef identity constraints are satisfied per file.
         val serviceLinksByFile = mutableMapOf<String, MutableList<Pair<String, Pair<StationPair, OSRMRoute?>>>>()
         for ((pairKey, pairAndRoute) in routedPairs) {
             val (pair, _) = pairAndRoute
@@ -169,7 +158,7 @@ class ServiceLinkProducerService(
             serviceLinksByFile.getOrPut(targetFile) { mutableListOf() }.add(pairKey to pairAndRoute)
         }
 
-        // WRITING PASS: inject ServiceLinks into target files, linksInSequence into JP files
+        // WRITING PASS: stream through ZIP, applying StAX transformation per XML file
         MDC.put("stage", "processing/inject")
         val outputBuffer = ByteArrayOutputStream()
         var totalAdded = 0
@@ -185,9 +174,16 @@ class ServiceLinkProducerService(
                         logger.info("Processing XML entry: {} ({} bytes, {} links to inject)",
                             entry.name, entryData.size, serviceLinksForFile.size)
                         val entryStart = System.currentTimeMillis()
-                        val (processedXml, addedCount) = netexProcessor.injectLinks(
-                            entryData, serviceLinksForFile, allServiceLinks
+
+                        val plan = netexProcessor.buildZipInjectionPlan(
+                            serviceLinksForFile, allServiceLinks,
+                            jpStopSequencesByFile[entry.name] ?: emptyMap(),
+                            existingSlijpByFile[entry.name] ?: emptyMap(),
+                            declaredStopIdsByFile[entry.name] ?: emptySet()
                         )
+                        val processedXml = netexProcessor.applyPlan(entryData, plan)
+                        val addedCount = serviceLinksForFile.size
+
                         val entryMs = System.currentTimeMillis() - entryStart
                         logger.info("Completed XML entry: {} in {}ms ({} bytes out, {} links added)",
                             entry.name, entryMs, processedXml.size, addedCount)
