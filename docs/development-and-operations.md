@@ -236,7 +236,7 @@ The monitoring script from step 1 should have printed the status message with th
 |-----------|----------------|
 | `RutebankenCorrelationId` | `manual-test-001` |
 | `EnturDatasetReferential` | `rb_test` |
-| `Status` | `SUCCESS` |
+| `LinkingStatus` | `SUCCESS` |
 | `LinkedNetexFilePath` | `test/sample-netex.xml` |
 | `addedServiceLinksCount` | Number of ServiceLinks added |
 
@@ -367,7 +367,7 @@ Published on completion. Attributes:
 |-----------|-------------|
 | `RutebankenCorrelationId` | Passed through from inbound message |
 | `EnturDatasetReferential` | Passed through from inbound message |
-| `Status` | `SUCCESS` or `FAILED` |
+| `LinkingStatus` | `SUCCESS` or `FAILED` |
 | `LinkedNetexFilePath` | Path to enriched file in servicelinker-exchange bucket |
 | `addedServiceLinksCount` | Number of ServiceLinks added |
 
@@ -414,7 +414,7 @@ marduk                        servicelinker               marduk
   |                                |                          |
   |                                |-- publish to             |
   |                                |   ServicelinkerStatusQ --|->
-  |                                |   (Status=SUCCESS,          |
+  |                                |   (LinkingStatus=SUCCESS,    |
   |                                |    LinkedNetexFilePath)     |
   |                                                           |
   |<-- subscribe to ServicelinkerStatusQueue -----------------|
@@ -608,7 +608,7 @@ The output should show a message with these attributes:
 |-----------|----------------|
 | `RutebankenCorrelationId` | `manual-dev-test-001` |
 | `EnturDatasetReferential` | `rb_test` |
-| `Status` | `SUCCESS` |
+| `LinkingStatus` | `SUCCESS` |
 | `LinkedNetexFilePath` | `test/sample-netex.xml` |
 | `addedServiceLinksCount` | Number of ServiceLinks added |
 

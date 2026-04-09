@@ -290,7 +290,7 @@ Following the same pattern Ashur uses, Servicelinker publishes status messages w
 |---|---|
 | `RutebankenCorrelationId` | Pass through from input |
 | `EnturDatasetReferential` | Pass through from input |
-| `Status` | `STARTED`, `SUCCESS`, or `FAILED` |
+| `LinkingStatus` | `STARTED`, `SUCCESS`, or `FAILED` |
 | `LinkedNetexFilePath` | Path to the enriched file in the Servicelinker exchange bucket |
 | `LinkingFailureReason` | Error message (on `FAILED` only) |
 
