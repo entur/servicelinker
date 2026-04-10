@@ -32,11 +32,58 @@ Servicelinker uses a hybrid approach:
 4. **Future features.** As netex-tools gains more capabilities (validation,
    geographic filtering), servicelinker gets them without custom code.
 
+## netex-tools API available (as of 0.0.42-SNAPSHOT)
+
+The two primary prerequisites for this migration have been implemented in
+netex-tools (`3e249a4`):
+
+### Stream/byte-array API (done)
+
+`NetexProcessor` (renamed from `NetexFilter`) accepts `Map<String, ByteArray>`
+at both input and output stages:
+
+```kotlin
+val processor = NetexProcessor(cliConfig, filterConfig)
+
+// Pass 1: build entity model from in-memory documents
+processor.buildEntityModel(documents: Map<String, ByteArray>)
+
+// Between passes: inspect model, run external enrichment
+val entities = processor.model.listAllEntities()
+// ... NSR lookups, OSRM routing ...
+
+// Pass 2: select entities and export
+val (entitySelection, refSelection) = processor.selectEntities()
+val result: ExportResult = processor.exportToByteArrays(documents, entitySelection, refSelection)
+// result.documents: Map<String, ByteArray>
+// result.report: FilterReport
+```
+
+Or as a one-shot convenience: `processor.run(documents): ExportResult`.
+
+### Between-pass hooks (done)
+
+The pipeline is decomposed into `buildEntityModel()`, `selectEntities()`,
+and `export*()` as separate public methods. The `model` property is publicly
+accessible after `buildEntityModel()` completes, allowing callers to:
+
+- Inspect entity/reference graph between passes
+- Run external enrichment (NSR coordinate lookups)
+- Compute routing (OSRM) using collected entity data
+- Modify selection criteria based on external data
+
+### Plugin endDocument(String) (done)
+
+Plugins receive `endDocument(documentName: String)` in stream mode (vs.
+`endDocument(file: File)` in filesystem mode), enabling correct per-document
+finalization without filesystem dependencies.
+
 ## Migration approach
 
 ### Phase 1: Pass 1 plugins (data collection)
 
-Replace DOM-based extraction in `NetexProcessor` with netex-tools plugins:
+Replace DOM-based extraction in servicelinker's `NetexProcessor` with
+netex-tools plugins:
 
 | Current method                        | netex-tools replacement                         |
 |---------------------------------------|------------------------------------------------|
@@ -51,9 +98,35 @@ Replace DOM-based extraction in `NetexProcessor` with netex-tools plugins:
 Each plugin would implement `NetexPlugin`, register its supported element types,
 and collect data in `startElement`/`characters`/`endElement` callbacks.
 
-**Prerequisite:** netex-tools needs to provide character-data callbacks for
-nested elements (e.g., `Location/Longitude` inside `ScheduledStopPoint`).
-Currently plugins only see registered top-level elements.
+The `endDocument(documentName)` callback provides the filename context needed
+to partition collected data per-file (for ZIP processing).
+
+**Integration with servicelinker's ZIP flow:**
+
+```kotlin
+// Unzip to Map<String, ByteArray>
+val documents: Map<String, ByteArray> = unzipToMap(zipData)
+
+// Pass 1 via netex-tools
+val ntProcessor = NetexProcessor(cliConfig, filterConfig)
+ntProcessor.buildEntityModel(documents)
+
+// Retrieve plugin-collected data
+val stopPlugin = filterConfig.plugins.filterIsInstance<StopPointPlugin>().first()
+val jpPlugin = filterConfig.plugins.filterIsInstance<JourneyPatternPlugin>().first()
+
+// Between passes: NSR enrichment + OSRM routing (unchanged)
+val enrichedStops = enrichStopPointsViaNsr(stopPlugin.stops, stopPlugin.assignments)
+val routedPairs = netexProcessor.routePairs(...)
+
+// Build injection plans per file, transform via StAX (Phase 2 handles this)
+```
+
+**Remaining prerequisite:** Nested character data in plugins. Extracting
+coordinates requires reading `ScheduledStopPoint > Location > Longitude` — a
+nested path. The plugin needs either:
+- Character data forwarded for all descendants of registered elements, or
+- A richer path-based registration (e.g., `ScheduledStopPoint/Location/Longitude`).
 
 ### Phase 2: Pass 2 XMLElementHandlers (injection)
 
@@ -71,27 +144,23 @@ between Pass 1 and Pass 2 regardless of framework.
 
 ### Phase 3: Integration
 
-- Replace ZIP handling with netex-tools' file-based processing (requires
-  unzip-to-tempdir adapter) or contribute stream-based API to netex-tools.
-- Replace `ServiceLinkProducerService` orchestration with netex-tools'
-  `FilterNetexApp` or its lower-level components.
-- Remove custom StAX transformer and DOM extraction code.
+- Replace ZIP handling: unzip to `Map<String, ByteArray>`, process via
+  netex-tools' in-memory API, re-zip the output map.
+- Use `NetexProcessor.buildEntityModel(documents)` for Pass 1 with custom
+  plugins for data collection.
+- Use `NetexProcessor.exportToByteArrays()` for Pass 2 with custom
+  `XMLElementHandler`s for injection, OR keep `StaxNetexTransformer` for
+  the write pass if netex-tools' handler model proves insufficient for
+  element injection.
+- Remove DOM extraction code once plugins are validated.
 
-## Changes needed in netex-tools
+## Remaining changes needed in netex-tools
 
 ### Must-have
 
-1. **Stream/byte-array API.** netex-tools currently operates on
-   `File(inputDir)` → `File(outputDir)`. Servicelinker works entirely
-   in-memory (GCS → byte arrays → ZIP streams). Either:
-   - Add `InputStream`/`OutputStream` overloads to `FilterNetexApp`, or
-   - Add a `ByteArrayNetexProcessor` adapter that wraps the existing API.
+1. ~~**Stream/byte-array API.**~~ Done (`3e249a4`).
 
-2. **Hook between passes.** `FilterNetexApp.run()` goes straight from Pass 1
-   to entity selection to Pass 2. Servicelinker needs to run external enrichment
-   (NSR coordinate lookups) and OSRM routing between passes. Options:
-   - Expose `buildEntityModel()` and `exportXmlFiles()` as separate public methods.
-   - Add a callback/hook interface invoked between passes.
+2. ~~**Hook between passes.**~~ Done (`3e249a4`).
 
 3. **XMLElementHandler for element injection.** Current handlers can modify or
    skip existing elements. Servicelinker needs to *inject new sibling elements*
@@ -131,6 +200,7 @@ between Pass 1 and Pass 2 regardless of framework.
 - **netex-tools is at 0.0.x.** API stability is not guaranteed. Breaking changes
   in the plugin or handler interfaces would require servicelinker updates. Since
   both projects are within Entur/ROR, this is manageable but should be tracked.
+  The recent `NetexFilter` → `NetexProcessor` rename is an example of such churn.
 
 - **SAX complexity for injection.** The current `StaxNetexTransformer` is ~250
   lines of focused streaming code. Rewriting it as netex-tools handlers would
@@ -141,13 +211,20 @@ between Pass 1 and Pass 2 regardless of framework.
   current StAX transformer's performance, since both are streaming. Verify with
   the 69MB hafas_FLY1.xml benchmark.
 
+- **Hybrid approach viable.** Phase 1 (plugins for extraction) and Phase 2
+  (handlers for injection) are independent. It is feasible to adopt netex-tools
+  for Pass 1 only and keep `StaxNetexTransformer` for Pass 2 until the
+  XMLElementHandler injection capabilities mature.
+
 ## Suggested timeline
 
-1. Contribute stream/byte-array API and between-pass hooks to netex-tools.
-2. Implement Pass 1 plugins in a feature branch. Compare extraction results
+1. ~~Contribute stream/byte-array API and between-pass hooks to netex-tools.~~
+   Done in 0.0.41.
+2. Contribute nested character data support to netex-tools plugins (item 4).
+3. Implement Pass 1 plugins in a feature branch. Compare extraction results
    with the current DOM approach to validate correctness.
-3. Implement Pass 2 handlers. Use the existing test suite to verify output
-   equivalence.
-4. Once validated, remove DOM extraction and StAX transformer code.
+4. Evaluate whether XMLElementHandlers can handle injection (item 3). If not,
+   keep StaxNetexTransformer for Pass 2.
+5. Once validated, remove DOM extraction code.
 
 Each phase can be done independently and rolled back without affecting the other.
