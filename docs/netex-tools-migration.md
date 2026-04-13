@@ -34,8 +34,8 @@ Servicelinker uses a hybrid approach:
 
 ## netex-tools API available (as of 0.0.42-SNAPSHOT)
 
-The two primary prerequisites for this migration have been implemented in
-netex-tools (`3e249a4`):
+The primary prerequisites for this migration have been implemented in
+netex-tools (`3e249a4`, `fd531ab`):
 
 ### Stream/byte-array API (done)
 
@@ -77,6 +77,24 @@ accessible after `buildEntityModel()` completes, allowing callers to:
 Plugins receive `endDocument(documentName: String)` in stream mode (vs.
 `endDocument(file: File)` in filesystem mode), enabling correct per-document
 finalization without filesystem dependencies.
+
+### Scoped element registration (done)
+
+Plugins can declare supported element types using `Ancestor/Element` syntax
+in `getSupportedElementTypes()` — the element matches only when it appears
+anywhere inside the given ancestor on the element stack. This avoids false
+matches on generic names like `Longitude`, `Latitude`, `Date`, or `Name`
+that appear in multiple NeTEx contexts.
+
+```kotlin
+override fun getSupportedElementTypes() = setOf(
+    "ScheduledStopPoint",
+    "ScheduledStopPoint/Longitude",  // only inside ScheduledStopPoint
+    "ScheduledStopPoint/Latitude",
+)
+```
+
+Unscoped element types continue to work as before.
 
 ## Migration approach
 
@@ -122,11 +140,10 @@ val routedPairs = netexProcessor.routePairs(...)
 // Build injection plans per file, transform via StAX (Phase 2 handles this)
 ```
 
-**Remaining prerequisite:** Nested character data in plugins. Extracting
-coordinates requires reading `ScheduledStopPoint > Location > Longitude` — a
-nested path. The plugin needs either:
-- Character data forwarded for all descendants of registered elements, or
-- A richer path-based registration (e.g., `ScheduledStopPoint/Location/Longitude`).
+Coordinate extraction (`ScheduledStopPoint > Location > Longitude/Latitude`)
+is now supported via the scoped registration syntax (`fd531ab`) — a plugin
+registers `ScheduledStopPoint/Longitude` and `ScheduledStopPoint/Latitude`
+and receives character data only in that ancestor context.
 
 ### Phase 2: Pass 2 XMLElementHandlers (injection)
 
@@ -162,20 +179,16 @@ between Pass 1 and Pass 2 regardless of framework.
 
 2. ~~**Hook between passes.**~~ Done (`3e249a4`).
 
-3. **XMLElementHandler for element injection.** Current handlers can modify or
+3. ~~**Nested character data in plugins.**~~ Done (`fd531ab`) via scoped
+   `Ancestor/Element` registration.
+
+4. **XMLElementHandler for element injection.** Current handlers can modify or
    skip existing elements. Servicelinker needs to *inject new sibling elements*
    that don't exist in the source (e.g., create a `<serviceLinks>` section).
    This requires:
    - Handlers that can emit elements at specific points relative to other elements.
    - A "before-element" or "after-element" hook pattern, not just
      startElement/endElement on existing elements.
-
-4. **Nested character data in plugins.** Plugins currently get callbacks for
-   registered element types. Extracting coordinates requires reading
-   `ScheduledStopPoint > Location > Longitude` — a nested path. The plugin
-   needs either:
-   - Character data forwarded for all descendants of registered elements, or
-   - A richer path-based registration (e.g., `ScheduledStopPoint/Location/Longitude`).
 
 ### Nice-to-have
 
@@ -220,10 +233,11 @@ between Pass 1 and Pass 2 regardless of framework.
 
 1. ~~Contribute stream/byte-array API and between-pass hooks to netex-tools.~~
    Done in 0.0.41.
-2. Contribute nested character data support to netex-tools plugins (item 4).
+2. ~~Contribute nested character data support to netex-tools plugins.~~
+   Done on main (`fd531ab`), will ship in 0.0.42.
 3. Implement Pass 1 plugins in a feature branch. Compare extraction results
    with the current DOM approach to validate correctness.
-4. Evaluate whether XMLElementHandlers can handle injection (item 3). If not,
+4. Evaluate whether XMLElementHandlers can handle injection (item 4). If not,
    keep StaxNetexTransformer for Pass 2.
 5. Once validated, remove DOM extraction code.
 
