@@ -250,8 +250,8 @@ class ZipHandlingTest {
             }
         }
 
-        val sharedDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles["_shared_data.xml"]!!))
-        val lineDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles["line.xml"]!!))
+        val sharedDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles.getValue("_shared_data.xml")))
+        val lineDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles.getValue("line.xml")))
 
         val sharedDataServiceLinks = sharedDoc.getElementsByTagName("ServiceLink").length
         val lineServiceLinks = lineDoc.getElementsByTagName("ServiceLink").length
@@ -368,7 +368,7 @@ class ZipHandlingTest {
         }
 
         // The ServiceLink should be placed in _shared_data.xml (from-stop A is declared there)
-        val sharedDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles["_shared_data.xml"]!!))
+        val sharedDoc = factory.newDocumentBuilder().parse(ByteArrayInputStream(outputFiles.getValue("_shared_data.xml")))
         val serviceLinks = sharedDoc.getElementsByTagName("ServiceLink")
         assertEquals(1, serviceLinks.length, "ServiceLink should be in _shared_data.xml")
 

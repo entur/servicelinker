@@ -59,10 +59,9 @@ class NsrServiceTest {
                 )
         )
 
-        val coordinate = nsrService.getQuayCoordinates("NSR:Quay:102403")
+        val coordinate = requireNotNull(nsrService.getQuayCoordinates("NSR:Quay:102403"))
 
-        assertNotNull(coordinate)
-        assertEquals(BigDecimal("60.393604"), coordinate!!.latitude)
+        assertEquals(BigDecimal("60.393604"), coordinate.latitude)
         assertEquals(BigDecimal("5.328240"), coordinate.longitude)
 
         wireMock.verify(

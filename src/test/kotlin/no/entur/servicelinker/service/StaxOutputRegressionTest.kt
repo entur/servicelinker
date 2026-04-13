@@ -471,7 +471,7 @@ class StaxOutputRegressionTest {
         }
 
         // Shared data: ServiceLink placed here (from-stop declared here)
-        val sharedDoc = parse(outputFiles["_shared_data.xml"]!!)
+        val sharedDoc = parse(outputFiles.getValue("_shared_data.xml"))
         val sharedServiceLinks = sharedDoc.getElementsByTagName("ServiceLink")
         assertEquals(1, sharedServiceLinks.length, "ServiceLink in shared_data")
 
@@ -485,7 +485,7 @@ class StaxOutputRegressionTest {
             "ToPointRef must use ScheduledStopPoint's actual version")
 
         // Line file: linksInSequence added, no ServiceLinks
-        val lineDoc = parse(outputFiles["line.xml"]!!)
+        val lineDoc = parse(outputFiles.getValue("line.xml"))
         assertEquals(0, lineDoc.getElementsByTagName("ServiceLink").length,
             "No ServiceLinks in line file")
         assertEquals(1, lineDoc.getElementsByTagName("ServiceLinkInJourneyPattern").length,
@@ -527,9 +527,8 @@ class StaxOutputRegressionTest {
         )
 
         // JP should have 2 merged entries
-        val jpLinks = plan.journeyPatternLinks[jpId]
-        assertNotNull(jpLinks)
-        assertEquals(2, jpLinks!!.size)
+        val jpLinks = requireNotNull(plan.journeyPatternLinks[jpId])
+        assertEquals(2, jpLinks.size)
 
         // First: existing entry preserved
         assertEquals("SLIJP:orig", jpLinks[0].id)
@@ -574,9 +573,8 @@ class StaxOutputRegressionTest {
             needsGmlNamespace = false
         )
 
-        val jpLinks = plan.journeyPatternLinks["TST:JP:1"]
-        assertNotNull(jpLinks)
-        assertEquals(1, jpLinks!!.size, "Only pair A→B should produce an entry, B→C has no service link")
+        val jpLinks = requireNotNull(plan.journeyPatternLinks["TST:JP:1"])
+        assertEquals(1, jpLinks.size, "Only pair A→B should produce an entry, B→C has no service link")
         assertEquals("SL:1", jpLinks[0].serviceLinkRef)
     }
 
