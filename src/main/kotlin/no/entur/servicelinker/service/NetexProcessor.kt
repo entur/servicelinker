@@ -476,7 +476,7 @@ class NetexProcessor(
 
     // --- Private helpers ---
 
-    private fun buildJpModeMap(document: Document): Map<String, TransportMode?> {
+    internal fun buildJpModeMap(document: Document): Map<String, TransportMode?> {
         // lineId → TransportMode
         val lineModes = mutableMapOf<String, TransportMode>()
         val lines = document.getElementsByTagName("Line")

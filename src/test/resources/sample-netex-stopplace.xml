@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture for parity testing the StopPlace extraction path and the Centroid/Location guard.
+  - SP1: canonical StopPlace with Centroid/Location/coords → should be emitted by both DOM and plugin.
+  - SP2: StopPlace with no direct Centroid, but a child Quay with Centroid/Location/coords.
+         DOM's getElementsByTagName("Centroid").item(0) returns the Quay's Centroid, so both
+         implementations capture the Quay's coordinates as the StopPlace's coords.
+  - SP3: StopPlace with a bare Location (no Centroid wrapper). DOM returns null; plugin must
+         also return null — the Centroid guard enforces this.
+  - SP4: StopPlace with a Name inside an alternativeNames/AlternativeName element but no
+         top-level Name. DOM's getElementsByTagName("Name").item(0) walks descendants and
+         returns that nested Name; plugin uses the same first-wins semantics.
+-->
+<PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+    <PublicationTimestamp>2026-04-13T10:00:00Z</PublicationTimestamp>
+    <ParticipantRef>TST:Codespace:NSR</ParticipantRef>
+    <dataObjects>
+        <SiteFrame id="TST:SiteFrame:1" version="1">
+            <stopPlaces>
+                <StopPlace id="TST:StopPlace:1" version="1">
+                    <Name>Canonical Stop</Name>
+                    <Centroid>
+                        <Location>
+                            <Longitude>10.1</Longitude>
+                            <Latitude>60.1</Latitude>
+                        </Location>
+                    </Centroid>
+                    <TransportMode>bus</TransportMode>
+                </StopPlace>
+                <StopPlace id="TST:StopPlace:2" version="1">
+                    <Name>Quay-Coords Stop</Name>
+                    <quays>
+                        <Quay id="TST:Quay:2a" version="1">
+                            <Centroid>
+                                <Location>
+                                    <Longitude>20.2</Longitude>
+                                    <Latitude>50.2</Latitude>
+                                </Location>
+                            </Centroid>
+                        </Quay>
+                    </quays>
+                </StopPlace>
+                <StopPlace id="TST:StopPlace:3" version="1">
+                    <Name>Bare-Location Stop</Name>
+                    <Location>
+                        <Longitude>99.9</Longitude>
+                        <Latitude>99.9</Latitude>
+                    </Location>
+                </StopPlace>
+                <StopPlace id="TST:StopPlace:4" version="1">
+                    <alternativeNames>
+                        <AlternativeName>
+                            <Name>Alt-Name Stop</Name>
+                        </AlternativeName>
+                    </alternativeNames>
+                    <Centroid>
+                        <Location>
+                            <Longitude>30.3</Longitude>
+                            <Latitude>40.4</Latitude>
+                        </Location>
+                    </Centroid>
+                </StopPlace>
+            </stopPlaces>
+        </SiteFrame>
+    </dataObjects>
+</PublicationDelivery>

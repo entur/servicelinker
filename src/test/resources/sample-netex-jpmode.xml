@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture that exercises every branch of NetexProcessor.buildJpModeMap:
+    - JP1: direct TransportMode on the JP itself.
+    - JP2: LineRef pointing to a Line *with* a mode.
+    - JP3: LineRef pointing to a Line *without* a mode, AND a RouteRef that would resolve to
+           a Line with a mode. DOM stops at LineRef and returns null; the plugin must match
+           (resolveJpModeMap must not fall through to RouteRef when a LineRef is present).
+    - JP4: RouteRef only (no direct mode, no LineRef on JP) — resolves through Route→Line.
+    - JP5: no mode inputs at all — null.
+-->
+<PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+    <PublicationTimestamp>2026-04-13T10:00:00Z</PublicationTimestamp>
+    <ParticipantRef>TST:Codespace:NSR</ParticipantRef>
+    <dataObjects>
+        <ServiceFrame id="TST:ServiceFrame:1" version="1">
+            <routes>
+                <Route id="TST:Route:modeless" version="1">
+                    <LineRef ref="TST:Line:modeless" version="1"/>
+                </Route>
+                <Route id="TST:Route:moded" version="1">
+                    <LineRef ref="TST:Line:moded" version="1"/>
+                </Route>
+            </routes>
+            <lines>
+                <Line id="TST:Line:moded" version="1">
+                    <Name>Moded Line</Name>
+                    <TransportMode>rail</TransportMode>
+                </Line>
+                <Line id="TST:Line:modeless" version="1">
+                    <Name>Modeless Line</Name>
+                </Line>
+            </lines>
+            <scheduledStopPoints>
+                <ScheduledStopPoint id="TST:ScheduledStopPoint:a" version="1">
+                    <Name>A</Name>
+                    <Location>
+                        <Longitude>10.0</Longitude>
+                        <Latitude>60.0</Latitude>
+                    </Location>
+                </ScheduledStopPoint>
+                <ScheduledStopPoint id="TST:ScheduledStopPoint:b" version="1">
+                    <Name>B</Name>
+                    <Location>
+                        <Longitude>10.1</Longitude>
+                        <Latitude>60.1</Latitude>
+                    </Location>
+                </ScheduledStopPoint>
+            </scheduledStopPoints>
+            <journeyPatterns>
+                <JourneyPattern id="TST:JourneyPattern:direct" version="1">
+                    <TransportMode>metro</TransportMode>
+                    <pointsInSequence>
+                        <StopPointInJourneyPattern id="TST:SPIJP:d1" version="1" order="1">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:a" version="1"/>
+                        </StopPointInJourneyPattern>
+                        <StopPointInJourneyPattern id="TST:SPIJP:d2" version="1" order="2">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:b" version="1"/>
+                        </StopPointInJourneyPattern>
+                    </pointsInSequence>
+                </JourneyPattern>
+                <JourneyPattern id="TST:JourneyPattern:lineModed" version="1">
+                    <LineRef ref="TST:Line:moded" version="1"/>
+                    <pointsInSequence>
+                        <StopPointInJourneyPattern id="TST:SPIJP:lm1" version="1" order="1">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:a" version="1"/>
+                        </StopPointInJourneyPattern>
+                        <StopPointInJourneyPattern id="TST:SPIJP:lm2" version="1" order="2">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:b" version="1"/>
+                        </StopPointInJourneyPattern>
+                    </pointsInSequence>
+                </JourneyPattern>
+                <JourneyPattern id="TST:JourneyPattern:lineModelessWithRouteFallback" version="1">
+                    <!-- LineRef to a Line with no mode; RouteRef that would otherwise resolve.
+                         DOM stops at LineRef and returns null. Plugin must match. -->
+                    <LineRef ref="TST:Line:modeless" version="1"/>
+                    <RouteRef ref="TST:Route:moded" version="1"/>
+                    <pointsInSequence>
+                        <StopPointInJourneyPattern id="TST:SPIJP:mw1" version="1" order="1">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:a" version="1"/>
+                        </StopPointInJourneyPattern>
+                        <StopPointInJourneyPattern id="TST:SPIJP:mw2" version="1" order="2">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:b" version="1"/>
+                        </StopPointInJourneyPattern>
+                    </pointsInSequence>
+                </JourneyPattern>
+                <JourneyPattern id="TST:JourneyPattern:routeOnly" version="1">
+                    <RouteRef ref="TST:Route:moded" version="1"/>
+                    <pointsInSequence>
+                        <StopPointInJourneyPattern id="TST:SPIJP:ro1" version="1" order="1">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:a" version="1"/>
+                        </StopPointInJourneyPattern>
+                        <StopPointInJourneyPattern id="TST:SPIJP:ro2" version="1" order="2">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:b" version="1"/>
+                        </StopPointInJourneyPattern>
+                    </pointsInSequence>
+                </JourneyPattern>
+                <JourneyPattern id="TST:JourneyPattern:noMode" version="1">
+                    <pointsInSequence>
+                        <StopPointInJourneyPattern id="TST:SPIJP:nm1" version="1" order="1">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:a" version="1"/>
+                        </StopPointInJourneyPattern>
+                        <StopPointInJourneyPattern id="TST:SPIJP:nm2" version="1" order="2">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:b" version="1"/>
+                        </StopPointInJourneyPattern>
+                    </pointsInSequence>
+                </JourneyPattern>
+            </journeyPatterns>
+        </ServiceFrame>
+    </dataObjects>
+</PublicationDelivery>

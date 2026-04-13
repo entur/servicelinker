@@ -51,6 +51,8 @@ dependencies {
     implementation(libs.jackson.dataformat.xml)
     implementation(libs.jackson.module.kotlin)
 
+    implementation(libs.netex.tools.lib)
+
     implementation(libs.caffeine)
     implementation(libs.logstash.logback.encoder)
 
