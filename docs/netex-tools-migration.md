@@ -126,13 +126,29 @@ reads per-document results off the returned `Pass1Results`.
 
 ### Phase 2: Pass 2 XMLElementHandlers (injection)
 
-Replace `StaxNetexTransformer` with netex-tools' write-pass handlers:
+Replace `StaxNetexTransformer` with netex-tools' write-pass handlers. Sibling
+injection is already expressible with the three current hooks
+(`startElement` / `characters` / `endElement`) by controlling the order of
+`writer` calls inside a callback — the same pattern ashur's `CodespacesHandler`
+uses to append `<FrameDefaults>` after `</codespaces>`:
+
+```kotlin
+override fun endElement(...) {
+    writer.endElement(uri, localName, qName)  // close original
+    writer.startElement(...)                  // emit new sibling
+    ...
+}
+```
+
+Equivalently, a handler registered on the element that should come *after*
+the injection can emit the new element before forwarding its own
+`startElement` call ("before-start" behavior).
 
 | Injection operation          | XMLElementHandler approach                     |
 |------------------------------|-----------------------------------------------|
-| Inject `<serviceLinks>` section | Handler on `ServiceFrame` — emits section before `</ServiceFrame>`, or handler on first AFTER_SERVICE_LINKS child |
-| Append to existing `<serviceLinks>` | Handler on `serviceLinks` — emits new elements before `</serviceLinks>` |
-| Inject stub stops            | Same pattern as serviceLinks, for `scheduledStopPoints` |
+| Inject `<serviceLinks>` section | Handler on the element immediately preceding the insertion point (schema-ordered cascade: after `<scheduledStopPoints>` if present, else before `<journeyPatterns>`); emits section inside its `endElement` / `startElement` callback |
+| Append to existing `<serviceLinks>` | Handler on `serviceLinks` — emits new children, then forwards the `</serviceLinks>` close tag |
+| Inject stub stops            | Same pattern, for `<scheduledStopPoints>` |
 | Replace `<linksInSequence>`  | Handler on `JourneyPattern` — buffers and replaces `linksInSequence` child |
 
 The `InjectionPlan` data model can be reused as the communication layer
@@ -145,45 +161,80 @@ between Pass 1 and Pass 2 regardless of framework.
   Done.
 - ~~Remove DOM extraction code once plugins are validated.~~ Done.
 - Pass 2 still uses `StaxNetexTransformer` for injection. Migrating it to
-  `NetexProcessor.exportToByteArrays()` with `XMLElementHandler`s depends on
-  the element-injection capability called out below.
+  `NetexProcessor.exportToByteArrays()` with `XMLElementHandler`s is not
+  blocked on any new netex-tools API; the remaining items below are
+  ergonomic improvements.
 
 ## Remaining changes needed in netex-tools
 
-### Must-have
+### Done
 
 1. ~~**Stream/byte-array API.**~~ Done (`3e249a4`).
-
 2. ~~**Hook between passes.**~~ Done (`3e249a4`).
-
 3. ~~**Nested character data in plugins.**~~ Done (`fd531ab`) via scoped
    `Ancestor/Element` registration.
 
-4. **XMLElementHandler for element injection.** Current handlers can modify or
-   skip existing elements. Servicelinker needs to *inject new sibling elements*
-   that don't exist in the source (e.g., create a `<serviceLinks>` section).
-   This requires:
-   - Handlers that can emit elements at specific points relative to other elements.
-   - A "before-element" or "after-element" hook pattern, not just
-     startElement/endElement on existing elements.
+### Required for Phase 2
+
+4. **Per-file context in `XMLElementHandler`.** For ZIP processing, each
+   document in the NeTEx archive carries its own `InjectionPlan`: the set of
+   stub stops, new `ServiceLink`s, and `linksInSequence` replacements varies
+   per line file. Servicelinker holds a `Map<String, InjectionPlan>` keyed
+   by source filename. A handler triggered inside `exportToByteArrays(...)`
+   has no way to tell which document it's rewriting, so it can't look up the
+   right plan — the three existing callbacks receive only `(uri, localName,
+   qName, attributes, writer)`.
+
+   `NetexPlugin` already solves the analogous problem on the read side via
+   `endDocument(documentName: String)` (added in `3e249a4`). Mirroring that
+   shape on the write side is the minimal change. Three possible surfaces,
+   roughly in order of preference:
+
+   1. **Lifecycle hooks on `XMLElementHandler`.** Add
+      `startDocument(documentName)` / `endDocument(documentName)` default
+      methods so a handler can cache the current document name as
+      per-instance state and read it back inside element callbacks. Keeps a
+      single handler instance across the batch, matches the plugin model,
+      zero churn on `FilterConfig`.
+   2. **Handler factory on `FilterConfig`.** Let
+      `withCustomElementHandlers(...)` accept a factory
+      `(documentName) -> Map<Path, XMLElementHandler>` so each document gets
+      fresh handler instances constructed with the right plan baked in.
+      Cleaner separation at the cost of handler allocation per file.
+   3. **Filename parameter on every callback.** Add `documentName: String`
+      to `startElement` / `characters` / `endElement`. Mechanical but breaks
+      every existing handler (including ashur's).
+
+   Option 1 is lowest-friction and symmetric with the existing plugin API.
+   Without any of these, the only workaround is calling
+   `exportToByteArrays` once per document with a per-document
+   `FilterConfig`, which defeats batching and complicates the servicelinker
+   call site.
 
 ### Nice-to-have
 
-5. **Per-file context in XMLElementHandler.** For ZIP processing, different files
-   get different injections. Handlers need to know which file is being processed
-   to look up the correct `InjectionPlan`. Options:
-   - Pass filename to handler callbacks.
-   - Allow per-file handler instances via a factory.
+5. **Ergonomic injection hooks (`beforeEndElement` / `afterStartElement`).**
+   Currently proposed on branch `henrik/element-injection-hooks` (netex-tools
+   `b7ed529`). Not a capability gap — sibling injection already works via the
+   three existing hooks — but the split avoids the "remember to forward the
+   original event" footgun and removes the need for handlers to interleave
+   their own writes with pass-through of the triggering event. Treat as an
+   API-clarity contribution rather than a blocker.
 
 6. **Event buffering API.** netex-tools has `EventBuffer` and
    `ParentsWithRequiredChildrenDeferEventsRule` for deferring events. Exposing
-   a public "buffer-and-replace" pattern would simplify the linksInSequence
-   merge (buffer existing, discard, write replacement).
+   a public "buffer-and-replace" pattern would simplify the `linksInSequence`
+   merge (buffer existing, discard, write replacement) so servicelinker
+   doesn't reimplement event buffering inside a handler.
 
-7. **Element ordering utilities.** Servicelinker maintains NeTEx schema element
-   ordering (e.g., `scheduledStopPoints` before `serviceLinks` before
-   `journeyPatterns`). A shared utility for NeTEx element ordering in
-   netex-tools would benefit all consumers.
+7. **Schema-ordered insertion helper.** The hard part of `<serviceLinks>`
+   injection isn't emitting the element — it's choosing *where*: after
+   `<scheduledStopPoints>` if it exists, else after an existing
+   `<serviceLinks>`, else before `<journeyPatterns>` (the
+   `AFTER_SCHEDULED_STOP_POINTS` / `AFTER_SERVICE_LINKS` cascade in
+   `StaxNetexTransformer`). A shared NeTEx-schema-aware "insert-at-position"
+   utility would benefit all netex-tools consumers and remove hand-coded
+   sibling-ordering logic from servicelinker's handlers.
 
 ## Risks and considerations
 
@@ -215,7 +266,8 @@ between Pass 1 and Pass 2 regardless of framework.
 3. ~~Implement Pass 1 plugins and validate via DOM parity.~~ Done.
 4. ~~Remove DOM extraction code.~~ Done — `NetexProcessor` now owns routing,
    plan building, and StAX injection only.
-5. Evaluate whether XMLElementHandlers can handle injection (item 4). If not,
-   keep StaxNetexTransformer for Pass 2.
+5. Migrate Pass 2 to `XMLElementHandler`s. Depends on per-file context
+   (item 4); the other items in "Nice-to-have" can land incrementally
+   after the initial cutover.
 
 Each phase can be done independently and rolled back without affecting the other.
