@@ -6,6 +6,7 @@ import no.entur.servicelinker.model.TransportMode
 import org.entur.netex.tools.lib.NetexProcessor
 import org.entur.netex.tools.lib.config.CliConfig
 import org.entur.netex.tools.lib.config.FilterConfig
+import org.springframework.stereotype.Service
 
 /**
  * Facade that runs all Pass 1 plugins in a single `NetexProcessor.buildEntityModel` pass
@@ -15,9 +16,9 @@ import org.entur.netex.tools.lib.config.FilterConfig
  * Each [extract] call builds fresh plugin instances, so the extractor is safe to reuse
  * across batches without state leaking between calls.
  *
- * Intended for parallel-run validation against the current DOM code path. Not yet wired
- * into production call sites — that switchover is step 4 of the migration plan.
+ * The Pass 1 replacement for servicelinker's former DOM extraction code.
  */
+@Service
 class Pass1PluginExtractor {
 
     fun extract(documents: Map<String, ByteArray>): Pass1Results {
@@ -94,7 +95,23 @@ data class DocResults(
     val stopSequences: Map<String, List<String>>,
     val existingSlijp: Map<String, Map<String, ExistingSlijpInfo>>,
     val jpModeMap: Map<String, TransportMode?>,
-)
+) {
+    /**
+     * Raw consecutive stop pairs across every JourneyPattern in the document, keyed by
+     * `${fromRef}_${toRef}`. First-seen wins for duplicates so the returned mode matches
+     * the JP that introduced the pair.
+     */
+    fun rawPairRefs(): Map<String, Triple<String, String, TransportMode?>> {
+        val out = LinkedHashMap<String, Triple<String, String, TransportMode?>>()
+        for ((jpId, refs) in stopSequences) {
+            val mode = jpModeMap[jpId]
+            for (i in 0 until refs.size - 1) {
+                out.putIfAbsent("${refs[i]}_${refs[i + 1]}", Triple(refs[i], refs[i + 1], mode))
+            }
+        }
+        return out
+    }
+}
 
 data class Pass1Results(val byDocument: Map<String, DocResults>) {
     fun forDocument(name: String): DocResults = byDocument[name]

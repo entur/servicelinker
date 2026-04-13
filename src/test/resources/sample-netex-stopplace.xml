@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Fixture for parity testing the StopPlace extraction path and the Centroid/Location guard.
-  - SP1: canonical StopPlace with Centroid/Location/coords → should be emitted by both DOM and plugin.
-  - SP2: StopPlace with no direct Centroid, but a child Quay with Centroid/Location/coords.
-         DOM's getElementsByTagName("Centroid").item(0) returns the Quay's Centroid, so both
-         implementations capture the Quay's coordinates as the StopPlace's coords.
-  - SP3: StopPlace with a bare Location (no Centroid wrapper). DOM returns null; plugin must
-         also return null — the Centroid guard enforces this.
-  - SP4: StopPlace with a Name inside an alternativeNames/AlternativeName element but no
-         top-level Name. DOM's getElementsByTagName("Name").item(0) walks descendants and
-         returns that nested Name; plugin uses the same first-wins semantics.
+  Fixture for StopPlace extraction and the Centroid/Location guard in StopPointPlugin.
+
+  - SP1: canonical StopPlace with Centroid/Location/coords → emitted with (60.1, 10.1).
+  - SP2: no direct Centroid/Location, but a child Quay has Centroid/Location/coords →
+         emitted with the Quay's coords (any-ancestor scoped match + first-wins).
+  - SP3: bare Location (no Centroid wrapper) → must NOT be emitted — the Centroid guard
+         in StopPointPlugin refuses to capture coords outside a Centroid for StopPlace.
+  - SP4: Name only inside alternativeNames/AlternativeName → "Alt-Name Stop" wins since
+         any-ancestor first-match finds the nested Name.
 -->
 <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
     <PublicationTimestamp>2026-04-13T10:00:00Z</PublicationTimestamp>

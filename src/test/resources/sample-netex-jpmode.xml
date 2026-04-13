@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Fixture that exercises every branch of NetexProcessor.buildJpModeMap:
-    - JP1: direct TransportMode on the JP itself.
-    - JP2: LineRef pointing to a Line *with* a mode.
-    - JP3: LineRef pointing to a Line *without* a mode, AND a RouteRef that would resolve to
-           a Line with a mode. DOM stops at LineRef and returns null; the plugin must match
-           (resolveJpModeMap must not fall through to RouteRef when a LineRef is present).
-    - JP4: RouteRef only (no direct mode, no LineRef on JP) — resolves through Route→Line.
-    - JP5: no mode inputs at all — null.
+  Fixture for every branch of Pass1PluginExtractor.resolveJpModeMap.
+
+  - JP:direct               → direct TransportMode on the JP wins.
+  - JP:lineModed            → LineRef to a Line with mode → that mode.
+  - JP:lineModelessWithRouteFallback → LineRef to a *mode-less* Line + RouteRef that would
+    otherwise resolve. DOM behavior committed to LineRef and returned null; the plugin
+    must match that — no silent fallback to RouteRef.
+  - JP:routeOnly            → no LineRef, only a RouteRef → resolves via Route→Line→mode.
+  - JP:noMode               → null.
+  - JP:vehicleModes         → list-valued <VehicleModes> with multiple tokens → first token wins.
 -->
 <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
     <PublicationTimestamp>2026-04-13T10:00:00Z</PublicationTimestamp>
@@ -71,8 +73,6 @@
                     </pointsInSequence>
                 </JourneyPattern>
                 <JourneyPattern id="TST:JourneyPattern:lineModelessWithRouteFallback" version="1">
-                    <!-- LineRef to a Line with no mode; RouteRef that would otherwise resolve.
-                         DOM stops at LineRef and returns null. Plugin must match. -->
                     <LineRef ref="TST:Line:modeless" version="1"/>
                     <RouteRef ref="TST:Route:moded" version="1"/>
                     <pointsInSequence>
@@ -101,6 +101,17 @@
                             <ScheduledStopPointRef ref="TST:ScheduledStopPoint:a" version="1"/>
                         </StopPointInJourneyPattern>
                         <StopPointInJourneyPattern id="TST:SPIJP:nm2" version="1" order="2">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:b" version="1"/>
+                        </StopPointInJourneyPattern>
+                    </pointsInSequence>
+                </JourneyPattern>
+                <JourneyPattern id="TST:JourneyPattern:vehicleModes" version="1">
+                    <VehicleModes>ferry bus</VehicleModes>
+                    <pointsInSequence>
+                        <StopPointInJourneyPattern id="TST:SPIJP:vm1" version="1" order="1">
+                            <ScheduledStopPointRef ref="TST:ScheduledStopPoint:a" version="1"/>
+                        </StopPointInJourneyPattern>
+                        <StopPointInJourneyPattern id="TST:SPIJP:vm2" version="1" order="2">
                             <ScheduledStopPointRef ref="TST:ScheduledStopPoint:b" version="1"/>
                         </StopPointInJourneyPattern>
                     </pointsInSequence>

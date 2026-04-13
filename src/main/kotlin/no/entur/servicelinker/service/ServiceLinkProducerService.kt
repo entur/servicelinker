@@ -7,6 +7,7 @@ import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.model.TransportMode
+import no.entur.servicelinker.plugins.Pass1PluginExtractor
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
@@ -23,7 +24,8 @@ class ServiceLinkProducerService(
     private val netexProcessor: NetexProcessor,
     private val osrmService: OSRMService,
     private val nsrService: NsrService,
-    @Value("\${gcs.bucket.output}") private val outputBucket: String
+    private val pass1Extractor: Pass1PluginExtractor,
+    @Value("\${gcs.bucket.output}") private val outputBucket: String,
 ) {
     private val logger = LoggerFactory.getLogger(ServiceLinkProducerService::class.java)
 
@@ -65,18 +67,18 @@ class ServiceLinkProducerService(
     suspend fun processZipDirectly(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> = processZipArchive(zipData, modesFilter, limit)
 
     private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> {
-        // PASS 1: Collect stops, assignments, stopDeclarationFile, existing service links,
-        //         JP stop sequences, existing SLIJP entries, and raw JP pair refs.
+        // PASS 1: stream each XML entry through the plugin extractor individually. Per-file
+        // error isolation (one malformed entry should not abort the archive) + bounded memory
+        // (one entry's parse state at a time) + preserved ZIP iteration order for firstXmlFile.
         MDC.put("stage", "processing/parse")
         val allStopPoints = mutableMapOf<String, StopPoint>()
         val allStopAssignments = mutableMapOf<String, String>()
         val stopDeclarationFile = mutableMapOf<String, String>()  // stopId → filename
         val stopVersions = mutableMapOf<String, String>()  // stopId → version from declaration
         val existingServiceLinksGlobal = mutableMapOf<String, String>()
-        val rawPairRefs = mutableMapOf<String, Triple<String, String, TransportMode?>>()
+        val rawPairRefs = linkedMapOf<String, Triple<String, String, TransportMode?>>()
         var firstXmlFile: String? = null
 
-        // Per-file data needed for plan building (avoids re-parsing in Pass 2)
         val jpStopSequencesByFile = mutableMapOf<String, Map<String, List<String>>>()
         val existingSlijpByFile = mutableMapOf<String, Map<String, Map<String, ExistingSlijpInfo>>>()
         val declaredStopIdsByFile = mutableMapOf<String, Set<String>>()
@@ -86,27 +88,23 @@ class ServiceLinkProducerService(
             while (entry != null) {
                 if (!entry.isDirectory && entry.name.endsWith(".xml", ignoreCase = true)) {
                     if (firstXmlFile == null) firstXmlFile = entry.name
+                    val entryBytes = zis.readBytes()
                     try {
-                        val entryBytes = zis.readBytes()
-                        val document = netexProcessor.parseXmlDocument(ByteArrayInputStream(entryBytes))
-                        val stops = netexProcessor.extractStopPoints(document).associateBy { it.id }
-                        val assignments = netexProcessor.extractStopAssignments(document)
-                        allStopPoints.putAll(stops)
-                        allStopAssignments.putAll(assignments)
-                        val declaredIdsAndVersions = netexProcessor.extractScheduledStopPointIdsAndVersions(document)
+                        val doc = pass1Extractor.extract(entry.name, entryBytes)
+                        allStopPoints.putAll(doc.stopPoints.associateBy { it.id })
+                        allStopAssignments.putAll(doc.assignments)
                         logger.debug("Pass 1 {}: {} ScheduledStopPoint IDs declared, {} with inline coords",
-                            entry.name, declaredIdsAndVersions.size, stops.size)
-                        declaredIdsAndVersions.forEach { (id, version) ->
+                            entry.name, doc.stopIdsAndVersions.size, doc.stopPoints.size)
+                        doc.stopIdsAndVersions.forEach { (id, version) ->
                             stopDeclarationFile[id] = entry.name
                             stopVersions[id] = version
                         }
-                        existingServiceLinksGlobal.putAll(netexProcessor.extractExistingServiceLinks(document))
-                        netexProcessor.collectJpPairRefs(document).forEach { (k, v) -> rawPairRefs.putIfAbsent(k, v) }
+                        existingServiceLinksGlobal.putAll(doc.existingServiceLinks)
+                        doc.rawPairRefs().forEach { (k, v) -> rawPairRefs.putIfAbsent(k, v) }
 
-                        // Collect per-file data for StAX injection plans
-                        jpStopSequencesByFile[entry.name] = netexProcessor.collectJpStopSequences(document)
-                        existingSlijpByFile[entry.name] = netexProcessor.collectExistingSlijpEntries(document)
-                        declaredStopIdsByFile[entry.name] = declaredIdsAndVersions.keys
+                        jpStopSequencesByFile[entry.name] = doc.stopSequences
+                        existingSlijpByFile[entry.name] = doc.existingSlijp
+                        declaredStopIdsByFile[entry.name] = doc.stopIdsAndVersions.keys
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -238,10 +236,11 @@ class ServiceLinkProducerService(
 
     private suspend fun extractAndEnrichStops(xmlData: ByteArray): Map<String, StopPoint> {
         return try {
-            val document = netexProcessor.parseXmlDocument(ByteArrayInputStream(xmlData))
-            val stops = netexProcessor.extractStopPoints(document).associateBy { it.id }
-            val assignments = netexProcessor.extractStopAssignments(document)
-            enrichStopPointsViaNsr(stops, assignments)
+            val doc = pass1Extractor.extract(NetexProcessor.SINGLE_DOC_NAME, xmlData)
+            val stops = doc.stopPoints.associateBy { it.id }
+            enrichStopPointsViaNsr(stops, doc.assignments)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             logger.warn("Failed to extract/enrich stops for NSR lookup: ${e.message}")
             emptyMap()

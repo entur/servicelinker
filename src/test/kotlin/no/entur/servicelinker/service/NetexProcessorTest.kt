@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.StopPoint
+import no.entur.servicelinker.plugins.Pass1PluginExtractor
 import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -32,7 +33,7 @@ class NetexProcessorTest {
     @BeforeEach
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, StaxNetexTransformer())
+        netexProcessor = NetexProcessor(mockOsrmService, StaxNetexTransformer(), Pass1PluginExtractor())
     }
 
     private fun getSampleNetexInputStream(): InputStream {
@@ -747,6 +748,9 @@ class NetexProcessorTest {
                         <frames>
                             <ServiceFrame id="HAV:ServiceFrame:1" version="1">
                                 <stopAssignments>
+                                    <!-- No `order` attribute: the NeTEx XSD marks it optional on
+                                         Assignment_VersionStructure. The PSA extraction path must
+                                         tolerate this shape. -->
                                     <PassengerStopAssignment id="HAV:PassengerStopAssignment:BGO" version="1">
                                         <ScheduledStopPointRef ref="HAV:ScheduledStopPoint:BGO"/>
                                         <QuayRef ref="NSR:Quay:102403"/>
@@ -763,12 +767,14 @@ class NetexProcessorTest {
             </PublicationDelivery>
         """.trimIndent()
 
-        val document = parseXmlFromStream(xml.byteInputStream())
-        val assignments = netexProcessor.extractStopAssignments(document)
+        val pass1 = Pass1PluginExtractor().extract(
+            NetexProcessor.SINGLE_DOC_NAME,
+            xml.toByteArray(Charsets.UTF_8)
+        )
 
-        assertEquals(2, assignments.size)
-        assertEquals("NSR:Quay:102403", assignments["HAV:ScheduledStopPoint:BGO"])
-        assertEquals("NSR:Quay:103500", assignments["HAV:ScheduledStopPoint:FRO"])
+        assertEquals(2, pass1.assignments.size)
+        assertEquals("NSR:Quay:102403", pass1.assignments["HAV:ScheduledStopPoint:BGO"])
+        assertEquals("NSR:Quay:103500", pass1.assignments["HAV:ScheduledStopPoint:FRO"])
     }
 
     @Test

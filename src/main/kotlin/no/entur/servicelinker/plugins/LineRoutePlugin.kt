@@ -12,14 +12,14 @@ import org.xml.sax.Attributes
  */
 internal class LineRoutePlugin : AbstractNetexPlugin() {
 
-    private val _lineModes = mutableMapOf<String, Map<String, TransportMode>>()
-    private val _routeToLine = mutableMapOf<String, Map<String, String>>()
+    private val _lineModes = linkedMapOf<String, Map<String, TransportMode>>()
+    private val _routeToLine = linkedMapOf<String, Map<String, String>>()
 
     val lineModes: Map<String, Map<String, TransportMode>> get() = _lineModes
     val routeToLine: Map<String, Map<String, String>> get() = _routeToLine
 
-    private var docLineModes: MutableMap<String, TransportMode> = mutableMapOf()
-    private var docRouteToLine: MutableMap<String, String> = mutableMapOf()
+    private var docLineModes: MutableMap<String, TransportMode> = linkedMapOf()
+    private var docRouteToLine: MutableMap<String, String> = linkedMapOf()
 
     private enum class Container { LINE, ROUTE }
     private var container: Container? = null
@@ -36,6 +36,7 @@ internal class LineRoutePlugin : AbstractNetexPlugin() {
         "Route",
         "Line/TransportMode",
         "Line/VehicleMode",
+        "Line/VehicleModes",
         "Route/LineRef",
     )
 
@@ -51,7 +52,7 @@ internal class LineRoutePlugin : AbstractNetexPlugin() {
                 currentId = attributes?.getValue("id")
                 currentLineRef = null
             }
-            "TransportMode", "VehicleMode" -> if (container == Container.LINE && currentMode == null) {
+            "TransportMode", "VehicleMode", "VehicleModes" -> if (container == Container.LINE && currentMode == null) {
                 modeText = StringBuilder()
             }
             "LineRef" -> if (container == Container.ROUTE && currentLineRef == null) {
@@ -66,7 +67,7 @@ internal class LineRoutePlugin : AbstractNetexPlugin() {
 
     override fun endElement(elementName: String, currentEntity: Entity?) {
         when (elementName) {
-            "TransportMode", "VehicleMode" -> {
+            "TransportMode", "VehicleMode", "VehicleModes" -> {
                 if (container == Container.LINE && currentMode == null) {
                     currentMode = parseTransportMode(modeText?.toString()?.trim())
                 }

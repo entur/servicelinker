@@ -69,6 +69,7 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
         "ScheduledStopPoint/Latitude",
         "ScheduledStopPoint/TransportMode",
         "ScheduledStopPoint/VehicleMode",
+        "ScheduledStopPoint/VehicleModes",
         "StopPlace/Name",
         "StopPlace/Centroid",
         "StopPlace/Location",
@@ -76,6 +77,7 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
         "StopPlace/Latitude",
         "StopPlace/TransportMode",
         "StopPlace/VehicleMode",
+        "StopPlace/VehicleModes",
     )
 
     override fun startElement(elementName: String, attributes: Attributes?, currentEntity: Entity?) {
@@ -103,7 +105,7 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
             "ShortName" -> startText(Target.SHORT_NAME)
             "Longitude" -> if (insideLocation) startText(Target.LONGITUDE)
             "Latitude" -> if (insideLocation) startText(Target.LATITUDE)
-            "TransportMode", "VehicleMode" -> startText(Target.MODE)
+            "TransportMode", "VehicleMode", "VehicleModes" -> startText(Target.MODE)
         }
     }
 
@@ -137,7 +139,7 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
                 if (target == Target.LATITUDE && lat == null) lat = text?.toString()?.trim()?.toBigDecimalOrNull()
                 clearText()
             }
-            "TransportMode", "VehicleMode" -> {
+            "TransportMode", "VehicleMode", "VehicleModes" -> {
                 if (target == Target.MODE && mode == null) mode = parseTransportMode(text?.toString()?.trim())
                 clearText()
             }

@@ -27,9 +27,10 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
     val existingSlijp: Map<String, Map<String, Map<String, ExistingSlijpInfo>>> get() = _existingSlijp
     val jpModeInputs: Map<String, Map<String, JpModeInputs>> get() = _jpModeInputs
 
-    private var docSequences: MutableMap<String, List<String>> = mutableMapOf()
-    private var docSlijp: MutableMap<String, Map<String, ExistingSlijpInfo>> = mutableMapOf()
-    private var docModes: MutableMap<String, JpModeInputs> = mutableMapOf()
+    // Order-preserving: downstream (rawPairRefs, injection plans) walks JPs in document order.
+    private var docSequences: MutableMap<String, List<String>> = linkedMapOf()
+    private var docSlijp: MutableMap<String, Map<String, ExistingSlijpInfo>> = linkedMapOf()
+    private var docModes: MutableMap<String, JpModeInputs> = linkedMapOf()
 
     private var jpId: String? = null
     private var jpDirectMode: TransportMode? = null
@@ -63,6 +64,7 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
         "JourneyPattern/RouteRef",
         "JourneyPattern/TransportMode",
         "JourneyPattern/VehicleMode",
+        "JourneyPattern/VehicleModes",
     )
 
     override fun startElement(elementName: String, attributes: Attributes?, currentEntity: Entity?) {
@@ -90,7 +92,7 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
             }
             "LineRef" -> if (jpLineRef == null) jpLineRef = attributes?.getValue("ref")
             "RouteRef" -> if (jpRouteRef == null) jpRouteRef = attributes?.getValue("ref")
-            "TransportMode", "VehicleMode" -> if (jpDirectMode == null) modeText = StringBuilder()
+            "TransportMode", "VehicleMode", "VehicleModes" -> if (jpDirectMode == null) modeText = StringBuilder()
         }
     }
 
@@ -100,7 +102,7 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
 
     override fun endElement(elementName: String, currentEntity: Entity?) {
         when (elementName) {
-            "TransportMode", "VehicleMode" -> {
+            "TransportMode", "VehicleMode", "VehicleModes" -> {
                 if (jpDirectMode == null) jpDirectMode = parseTransportMode(modeText?.toString()?.trim())
                 modeText = null
             }
@@ -141,9 +143,9 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
         _stopSequences[documentName] = docSequences.toMap()
         _existingSlijp[documentName] = docSlijp.toMap()
         _jpModeInputs[documentName] = docModes.toMap()
-        docSequences = mutableMapOf()
-        docSlijp = mutableMapOf()
-        docModes = mutableMapOf()
+        docSequences = linkedMapOf()
+        docSlijp = linkedMapOf()
+        docModes = linkedMapOf()
         resetJp(null)
     }
 

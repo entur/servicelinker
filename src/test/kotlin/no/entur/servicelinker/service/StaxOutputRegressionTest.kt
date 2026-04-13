@@ -9,6 +9,7 @@ import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.ServiceLinkData
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
+import no.entur.servicelinker.plugins.Pass1PluginExtractor
 import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -47,7 +48,7 @@ class StaxOutputRegressionTest {
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
         staxTransformer = StaxNetexTransformer()
-        netexProcessor = NetexProcessor(mockOsrmService, staxTransformer)
+        netexProcessor = NetexProcessor(mockOsrmService, staxTransformer, Pass1PluginExtractor())
 
         coEvery {
             mockOsrmService.calculateRoute(any(), any(), any())
@@ -252,7 +253,7 @@ class StaxOutputRegressionTest {
         val mockGcsService = mockk<GcsService>(relaxed = true)
         val mockNsrService = mockk<NsrService>(relaxed = true)
         val service = ServiceLinkProducerService(
-            mockGcsService, netexProcessor, mockOsrmService, mockNsrService, "test-output"
+            mockGcsService, netexProcessor, mockOsrmService, mockNsrService, Pass1PluginExtractor(), "test-output"
         )
 
         val sampleXml = getSampleNetexBytes()
@@ -308,7 +309,7 @@ class StaxOutputRegressionTest {
         val mockNsrService = mockk<NsrService>(relaxed = true)
         coEvery { mockNsrService.getQuayCoordinates(any()) } returns null
         val service = ServiceLinkProducerService(
-            mockGcsService, netexProcessor, mockOsrmService, mockNsrService, "test-output"
+            mockGcsService, netexProcessor, mockOsrmService, mockNsrService, Pass1PluginExtractor(), "test-output"
         )
 
         val zipData = havilaZip.readBytes()
@@ -389,7 +390,7 @@ class StaxOutputRegressionTest {
         coEvery { mockNsrService.getQuayCoordinates("NSR:Quay:1") } returns oslo
         coEvery { mockNsrService.getQuayCoordinates("NSR:Quay:2") } returns lillestrøm
         val service = ServiceLinkProducerService(
-            mockGcsService, netexProcessor, mockOsrmService, mockNsrService, "test-output"
+            mockGcsService, netexProcessor, mockOsrmService, mockNsrService, Pass1PluginExtractor(), "test-output"
         )
 
         val stopVersion = "20260212093839"

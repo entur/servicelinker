@@ -8,9 +8,11 @@ netex-tools itself would need to support this use case.
 
 Servicelinker uses a hybrid approach:
 
-- **Pass 1 (data collection):** DOM-based parsing extracts stop points,
+- **Pass 1 (data collection):** netex-tools SAX plugins extract stop points,
   assignments, journey pattern sequences, existing service links, and existing
-  SLIJP entries. NSR enrichment and OSRM routing happen between passes.
+  SLIJP entries. `Pass1PluginExtractor` (servicelinker) runs all plugins in a
+  single `NetexProcessor.buildEntityModel` pass. NSR enrichment and OSRM
+  routing happen between passes. The former DOM extraction code was removed.
 
 - **Pass 2 (injection):** A StAX streaming transformer (`StaxNetexTransformer`)
   takes an `InjectionPlan` data object and the original XML bytes, producing
@@ -98,52 +100,29 @@ Unscoped element types continue to work as before.
 
 ## Migration approach
 
-### Phase 1: Pass 1 plugins (data collection)
+### Phase 1: Pass 1 plugins (data collection) — done
 
-Replace DOM-based extraction in servicelinker's `NetexProcessor` with
-netex-tools plugins:
+Former DOM extractors have been replaced by five `NetexPlugin` implementations
+under `no.entur.servicelinker.plugins`, orchestrated by `Pass1PluginExtractor`:
 
-| Current method                        | netex-tools replacement                         |
-|---------------------------------------|------------------------------------------------|
-| `extractStopPoints()`                 | `NetexPlugin` for `ScheduledStopPoint`         |
-| `extractStopAssignments()`            | `NetexPlugin` for `PassengerStopAssignment`    |
-| `extractExistingServiceLinks()`       | `NetexPlugin` for `ServiceLink`                |
-| `collectJpStopSequences()`            | `NetexPlugin` for `JourneyPattern`             |
-| `collectExistingSlijpEntries()`       | `NetexPlugin` for `ServiceLinkInJourneyPattern`|
-| `buildJpModeMap()`                    | `NetexPlugin` for `Line`, `Route`              |
-| `extractScheduledStopPointIdsAndVersions()` | Available from `EntityModel`             |
+| Former DOM method                       | Plugin replacement                                        |
+|-----------------------------------------|----------------------------------------------------------|
+| `extractStopPoints`                     | `StopPointPlugin` (SSP + StopPlace, Centroid/Location-guarded) |
+| `extractScheduledStopPointIdsAndVersions` | `StopPointPlugin` (same pass, separate accumulator)    |
+| `extractStopAssignments`                | `StopAssignmentPlugin`                                   |
+| `extractExistingServiceLinks`           | `ServiceLinkPlugin`                                      |
+| `collectJpStopSequences`                | `JourneyPatternPlugin`                                   |
+| `collectExistingSlijpEntries`           | `JourneyPatternPlugin`                                   |
+| `buildJpModeMap`                        | `JourneyPatternPlugin` + `LineRoutePlugin`, resolved by `Pass1PluginExtractor.resolveJpModeMap` |
 
-Each plugin would implement `NetexPlugin`, register its supported element types,
-and collect data in `startElement`/`characters`/`endElement` callbacks.
+Each plugin uses the scoped `Ancestor/Element` registration syntax introduced
+in netex-tools 0.0.42 to disambiguate generic element names like `Longitude`,
+`Name`, `LineRef`, and `ServiceLinkRef` across NeTEx contexts. The plugins are
+fresh instances per `extract()` call so the facade is safe to reuse.
 
-The `endDocument(documentName)` callback provides the filename context needed
-to partition collected data per-file (for ZIP processing).
-
-**Integration with servicelinker's ZIP flow:**
-
-```kotlin
-// Unzip to Map<String, ByteArray>
-val documents: Map<String, ByteArray> = unzipToMap(zipData)
-
-// Pass 1 via netex-tools
-val ntProcessor = NetexProcessor(cliConfig, filterConfig)
-ntProcessor.buildEntityModel(documents)
-
-// Retrieve plugin-collected data
-val stopPlugin = filterConfig.plugins.filterIsInstance<StopPointPlugin>().first()
-val jpPlugin = filterConfig.plugins.filterIsInstance<JourneyPatternPlugin>().first()
-
-// Between passes: NSR enrichment + OSRM routing (unchanged)
-val enrichedStops = enrichStopPointsViaNsr(stopPlugin.stops, stopPlugin.assignments)
-val routedPairs = netexProcessor.routePairs(...)
-
-// Build injection plans per file, transform via StAX (Phase 2 handles this)
-```
-
-Coordinate extraction (`ScheduledStopPoint > Location > Longitude/Latitude`)
-is now supported via the scoped registration syntax (`fd531ab`) — a plugin
-registers `ScheduledStopPoint/Longitude` and `ScheduledStopPoint/Latitude`
-and receives character data only in that ancestor context.
+The ZIP flow in `ServiceLinkProducerService` runs the extractor once over all
+`.xml` entries via `NetexProcessor.buildEntityModel(Map<String, ByteArray>)` and
+reads per-document results off the returned `Pass1Results`.
 
 ### Phase 2: Pass 2 XMLElementHandlers (injection)
 
@@ -161,15 +140,13 @@ between Pass 1 and Pass 2 regardless of framework.
 
 ### Phase 3: Integration
 
-- Replace ZIP handling: unzip to `Map<String, ByteArray>`, process via
-  netex-tools' in-memory API, re-zip the output map.
-- Use `NetexProcessor.buildEntityModel(documents)` for Pass 1 with custom
-  plugins for data collection.
-- Use `NetexProcessor.exportToByteArrays()` for Pass 2 with custom
-  `XMLElementHandler`s for injection, OR keep `StaxNetexTransformer` for
-  the write pass if netex-tools' handler model proves insufficient for
-  element injection.
-- Remove DOM extraction code once plugins are validated.
+- ~~Unzip to `Map<String, ByteArray>` and run Pass 1 via
+  `NetexProcessor.buildEntityModel(documents)` with servicelinker's plugins.~~
+  Done.
+- ~~Remove DOM extraction code once plugins are validated.~~ Done.
+- Pass 2 still uses `StaxNetexTransformer` for injection. Migrating it to
+  `NetexProcessor.exportToByteArrays()` with `XMLElementHandler`s depends on
+  the element-injection capability called out below.
 
 ## Remaining changes needed in netex-tools
 
@@ -234,11 +211,11 @@ between Pass 1 and Pass 2 regardless of framework.
 1. ~~Contribute stream/byte-array API and between-pass hooks to netex-tools.~~
    Done in 0.0.41.
 2. ~~Contribute nested character data support to netex-tools plugins.~~
-   Done on main (`fd531ab`), will ship in 0.0.42.
-3. Implement Pass 1 plugins in a feature branch. Compare extraction results
-   with the current DOM approach to validate correctness.
-4. Evaluate whether XMLElementHandlers can handle injection (item 4). If not,
+   Done in 0.0.42 (`fd531ab`).
+3. ~~Implement Pass 1 plugins and validate via DOM parity.~~ Done.
+4. ~~Remove DOM extraction code.~~ Done — `NetexProcessor` now owns routing,
+   plan building, and StAX injection only.
+5. Evaluate whether XMLElementHandlers can handle injection (item 4). If not,
    keep StaxNetexTransformer for Pass 2.
-5. Once validated, remove DOM extraction code.
 
 Each phase can be done independently and rolled back without affecting the other.
