@@ -3,10 +3,11 @@ package no.entur.servicelinker.service
 import kotlinx.coroutines.CancellationException
 import no.entur.servicelinker.model.DirectProcessingResult
 import no.entur.servicelinker.model.ExistingSlijpInfo
-import no.entur.servicelinker.model.OSRMRoute
+import no.entur.servicelinker.model.ProcessedDataset
+import no.entur.servicelinker.model.RoutedPair
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
-import no.entur.servicelinker.model.TransportMode
+import no.entur.servicelinker.plugins.RawPairRef
 import no.entur.servicelinker.plugins.Pass1PluginExtractor
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
@@ -46,7 +47,7 @@ class ServiceLinkProducerService(
         }
 
         MDC.put("stage", "processing/parse")
-        val (processedData, totalAdded) = if (isZip || objectName.endsWith(".zip", ignoreCase = true)) {
+        val processed = if (isZip || objectName.endsWith(".zip", ignoreCase = true)) {
             processZipArchive(data, modesFilter)
         } else {
             processSingleXml(data, modesFilter)
@@ -54,19 +55,19 @@ class ServiceLinkProducerService(
 
         MDC.put("stage", "processing/upload")
         gcsService.uploadFile(
-            processedData,
+            processed.outputBytes,
             outputBucket,
             objectName,
             if (isZip) "application/zip" else "application/xml"
         )
 
-        logger.info("Dataset processing complete. Added {} ServiceLinks total. Output: gs://{}/{}", totalAdded, outputBucket, objectName)
-        return totalAdded
+        logger.info("Dataset processing complete. Added {} ServiceLinks total. Output: gs://{}/{}", processed.addedCount, outputBucket, objectName)
+        return processed.addedCount
     }
 
-    suspend fun processZipDirectly(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> = processZipArchive(zipData, modesFilter, limit)
+    suspend fun processZipDirectly(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): ProcessedDataset = processZipArchive(zipData, modesFilter, limit)
 
-    private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> {
+    private suspend fun processZipArchive(zipData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): ProcessedDataset {
         // PASS 1: stream each XML entry through the plugin extractor individually. Per-file
         // error isolation (one malformed entry should not abort the archive) + bounded memory
         // (one entry's parse state at a time) + preserved ZIP iteration order for firstXmlFile.
@@ -76,7 +77,7 @@ class ServiceLinkProducerService(
         val stopDeclarationFile = mutableMapOf<String, String>()  // stopId → filename
         val stopVersions = mutableMapOf<String, String>()  // stopId → version from declaration
         val existingServiceLinksGlobal = mutableMapOf<String, String>()
-        val rawPairRefs = linkedMapOf<String, Triple<String, String, TransportMode?>>()
+        val rawPairRefs = linkedMapOf<String, RawPairRef>()
         var firstXmlFile: String? = null
 
         val jpStopSequencesByFile = mutableMapOf<String, Map<String, List<String>>>()
@@ -126,11 +127,10 @@ class ServiceLinkProducerService(
         // Resolve raw pair refs to StationPairs using enriched stop coordinates, skipping existing links
         val allNeededPairs = rawPairRefs
             .filterKeys { it !in existingServiceLinksGlobal }
-            .mapNotNull { (pairKey, triple) ->
-                val (fromRef, toRef, mode) = triple
-                val from = enrichedStopPoints[fromRef]
-                val to = enrichedStopPoints[toRef]
-                if (from != null && to != null) pairKey to StationPair(from, to, mode) else null
+            .mapNotNull { (pairKey, ref) ->
+                val from = enrichedStopPoints[ref.fromRef]
+                val to = enrichedStopPoints[ref.toRef]
+                if (from != null && to != null) pairKey to StationPair(from, to, ref.mode) else null
             }.toMap()
 
         logger.info("ZIP planning: ${allNeededPairs.size} pairs need new service links")
@@ -139,21 +139,21 @@ class ServiceLinkProducerService(
         MDC.put("stage", "processing/route")
         val allServiceLinks = existingServiceLinksGlobal.toMutableMap()
         val routedPairs = netexProcessor.routePairs(allNeededPairs, modesFilter, limit)
-        for ((pairKey, pairAndRoute) in routedPairs) {
-            allServiceLinks[pairKey] = NetexProcessor.computeServiceLinkId(pairAndRoute.first)
+        for ((pairKey, routed) in routedPairs) {
+            allServiceLinks[pairKey] = NetexProcessor.computeServiceLinkId(routed.stationPair)
         }
 
         logger.info("ZIP routing: ${routedPairs.size} new service links routed")
 
         // Assign each ServiceLink to the file that declares its from-stop's ScheduledStopPoint.
-        val serviceLinksByFile = mutableMapOf<String, MutableList<Pair<String, Pair<StationPair, OSRMRoute?>>>>()
-        for ((pairKey, pairAndRoute) in routedPairs) {
-            val (pair, _) = pairAndRoute
+        val serviceLinksByFile = mutableMapOf<String, MutableList<Pair<String, RoutedPair>>>()
+        for ((pairKey, routed) in routedPairs) {
+            val pair = routed.stationPair
             val targetFile = stopDeclarationFile[pair.from.id]
                 ?: stopDeclarationFile[pair.to.id]
                 ?: firstXmlFile
                 ?: continue
-            serviceLinksByFile.getOrPut(targetFile) { mutableListOf() }.add(pairKey to pairAndRoute)
+            serviceLinksByFile.getOrPut(targetFile) { mutableListOf() }.add(pairKey to routed)
         }
 
         // WRITING PASS: stream through ZIP, applying StAX transformation per XML file
@@ -198,10 +198,10 @@ class ServiceLinkProducerService(
             }
         }
 
-        return Pair(outputBuffer.toByteArray(), totalAdded)
+        return ProcessedDataset(outputBuffer.toByteArray(), totalAdded)
     }
 
-    private suspend fun processSingleXml(xmlData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): Pair<ByteArray, Int> {
+    private suspend fun processSingleXml(xmlData: ByteArray, modesFilter: Set<String>? = null, limit: Int? = null): ProcessedDataset {
         val enrichedStops = extractAndEnrichStops(xmlData)
         return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData), enrichedStops, modesFilter, limit)
     }

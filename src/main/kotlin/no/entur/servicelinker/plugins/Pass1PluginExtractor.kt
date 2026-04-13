@@ -101,12 +101,12 @@ data class DocResults(
      * `${fromRef}_${toRef}`. First-seen wins for duplicates so the returned mode matches
      * the JP that introduced the pair.
      */
-    fun rawPairRefs(): Map<String, Triple<String, String, TransportMode?>> {
-        val out = LinkedHashMap<String, Triple<String, String, TransportMode?>>()
+    fun rawPairRefs(): Map<String, RawPairRef> {
+        val out = LinkedHashMap<String, RawPairRef>()
         for ((jpId, refs) in stopSequences) {
             val mode = jpModeMap[jpId]
             for (i in 0 until refs.size - 1) {
-                out.putIfAbsent("${refs[i]}_${refs[i + 1]}", Triple(refs[i], refs[i + 1], mode))
+                out.putIfAbsent("${refs[i]}_${refs[i + 1]}", RawPairRef(refs[i], refs[i + 1], mode))
             }
         }
         return out
@@ -117,3 +117,10 @@ data class Pass1Results(val byDocument: Map<String, DocResults>) {
     fun forDocument(name: String): DocResults = byDocument[name]
         ?: error("No results for document: $name (have: ${byDocument.keys})")
 }
+
+/** Raw consecutive stop reference with the transport mode of the JP that introduced it. */
+data class RawPairRef(
+    val fromRef: String,
+    val toRef: String,
+    val mode: TransportMode?,
+)

@@ -4,6 +4,8 @@ import kotlinx.coroutines.CancellationException
 import no.entur.servicelinker.model.ExistingSlijpInfo
 import no.entur.servicelinker.model.InjectionPlan
 import no.entur.servicelinker.model.OSRMRoute
+import no.entur.servicelinker.model.ProcessedDataset
+import no.entur.servicelinker.model.RoutedPair
 import no.entur.servicelinker.model.ServiceLinkData
 import no.entur.servicelinker.model.SlijpEntry
 import no.entur.servicelinker.model.StationPair
@@ -27,7 +29,7 @@ class NetexProcessor(
         externalStopPoints: Map<String, StopPoint> = emptyMap(),
         modesFilter: Set<String>? = null,
         limit: Int? = null
-    ): Pair<ByteArray, Int> {
+    ): ProcessedDataset {
         logger.info("Starting NeTEx file processing")
         @Suppress("BlockingMethodInNonBlockingContext") // Always a ByteArrayInputStream in practice
         val inputBytes = inputStream.readAllBytes()
@@ -59,16 +61,17 @@ class NetexProcessor(
         val allServiceLinks = pass1.existingServiceLinks.toMutableMap()
 
         val routedPairs = routePairs(neededPairs, modesFilter, limit)
-        val newServiceLinkData = routedPairs.map { (pairKey, pairAndRoute) ->
-            val data = createServiceLinkData(pairAndRoute.first, pairAndRoute.second)
+        val newServiceLinkData = LinkedHashMap<String, ServiceLinkData>()
+        for ((pairKey, routed) in routedPairs) {
+            val data = createServiceLinkData(routed.stationPair, routed.route)
             allServiceLinks[pairKey] = data.id
-            pairKey to data
+            newServiceLinkData[pairKey] = data
         }
         val addedCount = newServiceLinkData.size
 
         if (addedCount == 0) {
             logger.info("NeTEx processing completed. No service links to add")
-            return Pair(inputBytes, 0)
+            return ProcessedDataset(inputBytes, 0)
         }
 
         val plan = buildInjectionPlan(
@@ -82,7 +85,7 @@ class NetexProcessor(
 
         val modifiedXml = staxTransformer.transform(inputBytes, plan)
         logger.info("NeTEx processing completed. Added $addedCount service links")
-        return Pair(modifiedXml, addedCount)
+        return ProcessedDataset(modifiedXml, addedCount)
     }
 
     /** Route stop pairs via OSRM, applying mode filter and distance/limit constraints. */
@@ -90,8 +93,8 @@ class NetexProcessor(
         pairs: Map<String, StationPair>,
         modesFilter: Set<String>?,
         limit: Int?
-    ): LinkedHashMap<String, Pair<StationPair, OSRMRoute?>> {
-        val result = linkedMapOf<String, Pair<StationPair, OSRMRoute?>>()
+    ): LinkedHashMap<String, RoutedPair> {
+        val result = linkedMapOf<String, RoutedPair>()
         var remaining = limit
         for ((pairKey, pair) in pairs) {
             if (remaining != null && remaining <= 0) break
@@ -111,7 +114,7 @@ class NetexProcessor(
                 logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: distance ${route.distance}m exceeds max")
                 continue
             }
-            result[pairKey] = pair to route
+            result[pairKey] = RoutedPair(pair, route)
             if (remaining != null) remaining = (remaining - 1).coerceAtLeast(0)
         }
         return result
@@ -156,7 +159,7 @@ class NetexProcessor(
 
     /** Build an InjectionPlan that captures all modifications for a single file. */
     fun buildInjectionPlan(
-        newServiceLinkData: List<Pair<String, ServiceLinkData>>,
+        newServiceLinkData: Map<String, ServiceLinkData>,
         allServiceLinks: Map<String, String>,
         jpStopSequences: Map<String, List<String>>,
         existingSlijpEntries: Map<String, Map<String, ExistingSlijpInfo>>,
@@ -165,7 +168,7 @@ class NetexProcessor(
     ): InjectionPlan {
         // Stub stops: referenced by new ServiceLinks but not declared in this file
         val referencedStops = mutableMapOf<String, String>()
-        for ((_, data) in newServiceLinkData) {
+        for (data in newServiceLinkData.values) {
             referencedStops[data.fromPointRef] = data.fromPointVersion
             referencedStops[data.toPointRef] = data.toPointVersion
         }
@@ -219,7 +222,7 @@ class NetexProcessor(
         }
 
         return InjectionPlan(
-            newServiceLinks = newServiceLinkData.map { it.second },
+            newServiceLinks = newServiceLinkData.values.toList(),
             stubScheduledStopPoints = stubStops,
             journeyPatternLinks = jpLinks,
             needsGmlNamespace = needsGmlNamespace
@@ -228,15 +231,15 @@ class NetexProcessor(
 
     /** Build an InjectionPlan for a ZIP file entry using pre-routed data. */
     fun buildZipInjectionPlan(
-        newServiceLinksForThisDoc: List<Pair<String, Pair<StationPair, OSRMRoute?>>>,
+        newServiceLinksForThisDoc: List<Pair<String, RoutedPair>>,
         allServiceLinks: Map<String, String>,
         jpStopSequences: Map<String, List<String>>,
         existingSlijpEntries: Map<String, Map<String, ExistingSlijpInfo>>,
         declaredStopIds: Set<String>
     ): InjectionPlan {
-        val newData = newServiceLinksForThisDoc.map { (pairKey, pairAndRoute) ->
-            val (pair, route) = pairAndRoute
-            pairKey to createServiceLinkData(pair, route)
+        val newData = LinkedHashMap<String, ServiceLinkData>()
+        for ((pairKey, routed) in newServiceLinksForThisDoc) {
+            newData[pairKey] = createServiceLinkData(routed.stationPair, routed.route)
         }
         return buildInjectionPlan(
             newData, allServiceLinks, jpStopSequences,

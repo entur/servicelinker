@@ -5,6 +5,7 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.DirectProcessingResult
+import no.entur.servicelinker.model.ProcessedDataset
 import no.entur.servicelinker.service.ServiceLinkProducerService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -68,7 +69,7 @@ class ServiceLinkControllerTest {
     @Test
     fun `process-zip with no modes passes null filter`() = runTest {
         val zip = byteArrayOf(0x50, 0x4B)
-        coEvery { mockService.processZipDirectly(any(), null) } returns Pair(zip, 0)
+        coEvery { mockService.processZipDirectly(any(), null) } returns ProcessedDataset(zip, 0)
 
         controller.processZipFile(zip, "test.zip", null)
 
@@ -78,7 +79,7 @@ class ServiceLinkControllerTest {
     @Test
     fun `process-zip with bracket notation passes uppercase set`() = runTest {
         val zip = byteArrayOf(0x50, 0x4B)
-        coEvery { mockService.processZipDirectly(any(), setOf("FERRY")) } returns Pair(zip, 3)
+        coEvery { mockService.processZipDirectly(any(), setOf("FERRY")) } returns ProcessedDataset(zip, 3)
 
         controller.processZipFile(zip, "test.zip", "[ferry]")
 
@@ -88,7 +89,7 @@ class ServiceLinkControllerTest {
     @Test
     fun `process-zip with empty bracket notation passes empty set (process none)`() = runTest {
         val zip = byteArrayOf(0x50, 0x4B)
-        coEvery { mockService.processZipDirectly(any(), emptySet()) } returns Pair(zip, 0)
+        coEvery { mockService.processZipDirectly(any(), emptySet()) } returns ProcessedDataset(zip, 0)
 
         controller.processZipFile(zip, "test.zip", "[]")
 
@@ -99,7 +100,7 @@ class ServiceLinkControllerTest {
     fun `process-zip returns 200 with processed bytes on success`() = runTest {
         val input = byteArrayOf(0x50, 0x4B)
         val output = byteArrayOf(0x50, 0x4B, 0x01)
-        coEvery { mockService.processZipDirectly(any(), any()) } returns Pair(output, 2)
+        coEvery { mockService.processZipDirectly(any(), any()) } returns ProcessedDataset(output, 2)
 
         val response = controller.processZipFile(input, "test.zip", null)
 

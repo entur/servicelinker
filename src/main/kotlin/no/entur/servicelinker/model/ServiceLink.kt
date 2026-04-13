@@ -17,3 +17,9 @@ data class StationPair(
     val to: StopPoint,
     val transportMode: TransportMode? = null
 )
+
+/** A stop pair together with its (optional) OSRM-routed geometry. */
+data class RoutedPair(
+    val stationPair: StationPair,
+    val route: OSRMRoute?,
+)

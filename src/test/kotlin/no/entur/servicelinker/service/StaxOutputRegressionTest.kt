@@ -517,7 +517,7 @@ class StaxOutputRegressionTest {
         )
 
         val plan = netexProcessor.buildInjectionPlan(
-            newServiceLinkData = listOf(
+            newServiceLinkData = mapOf(
                 "TST:SSP:B_TST:SSP:C" to ServiceLinkData("SL:new", "1", 1000, "P:1", "ls:1", "59.0 10.0", "TST:SSP:B", "1", "TST:SSP:C", "1")
             ),
             allServiceLinks = allServiceLinks,
@@ -546,7 +546,7 @@ class StaxOutputRegressionTest {
     @Test
     fun `buildInjectionPlan computes stub stops for cross-file references`() {
         val plan = netexProcessor.buildInjectionPlan(
-            newServiceLinkData = listOf(
+            newServiceLinkData = mapOf(
                 "A_B" to ServiceLinkData("SL:1", "1", null, "P:1", "ls:1", "59.0 10.0", "SSP:A", "1", "SSP:B", "42")
             ),
             allServiceLinks = mapOf("A_B" to "SL:1"),
@@ -566,7 +566,7 @@ class StaxOutputRegressionTest {
     @Test
     fun `buildInjectionPlan skips JP pairs with no service link`() {
         val plan = netexProcessor.buildInjectionPlan(
-            newServiceLinkData = emptyList(),
+            newServiceLinkData = emptyMap(),
             allServiceLinks = mapOf("SSP:A_SSP:B" to "SL:1"),  // only A→B, not B→C
             jpStopSequences = mapOf("TST:JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
             existingSlijpEntries = emptyMap(),
@@ -582,7 +582,7 @@ class StaxOutputRegressionTest {
     @Test
     fun `buildInjectionPlan produces empty plan when nothing to inject`() {
         val plan = netexProcessor.buildInjectionPlan(
-            newServiceLinkData = emptyList(),
+            newServiceLinkData = emptyMap(),
             allServiceLinks = emptyMap(),
             jpStopSequences = mapOf("TST:JP:1" to listOf("SSP:A", "SSP:B")),
             existingSlijpEntries = emptyMap(),
