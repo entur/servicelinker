@@ -149,7 +149,7 @@ the injection can emit the new element before forwarding its own
 | Inject `<serviceLinks>` section | Handler on the element immediately preceding the insertion point (schema-ordered cascade: after `<scheduledStopPoints>` if present, else before `<journeyPatterns>`); emits section inside its `endElement` / `startElement` callback |
 | Append to existing `<serviceLinks>` | Handler on `serviceLinks` — emits new children, then forwards the `</serviceLinks>` close tag |
 | Inject stub stops            | Same pattern, for `<scheduledStopPoints>` |
-| Replace `<linksInSequence>`  | Handler on `JourneyPattern` — buffers and replaces `linksInSequence` child |
+| Replace `<linksInSequence>`  | Exclude existing SLIJP entities from the selection + `elementsRequiredChildren` drops the empty wrapper; handler on `JourneyPattern` emits merged replacement in `endElement` |
 
 The `InjectionPlan` data model can be reused as the communication layer
 between Pass 1 and Pass 2 regardless of framework.
@@ -174,46 +174,39 @@ between Pass 1 and Pass 2 regardless of framework.
 3. ~~**Nested character data in plugins.**~~ Done (`fd531ab`) via scoped
    `Ancestor/Element` registration.
 
-### Required for Phase 2
+### Not blocking
 
-4. **Per-file context in `XMLElementHandler`.** For ZIP processing, each
-   document in the NeTEx archive carries its own `InjectionPlan`: the set of
-   stub stops, new `ServiceLink`s, and `linksInSequence` replacements varies
-   per line file. Servicelinker holds a `Map<String, InjectionPlan>` keyed
-   by source filename. A handler triggered inside `exportToByteArrays(...)`
-   has no way to tell which document it's rewriting, so it can't look up the
-   right plan — the three existing callbacks receive only `(uri, localName,
-   qName, attributes, writer)`.
+4. **Per-file context in `XMLElementHandler`.** Servicelinker's ZIP flow
+   already processes one document at a time (`ServiceLinkProducerService`
+   lines 164-198), building a per-document `InjectionPlan` and applying it
+   individually. Fresh handler instances are constructed with the right
+   plan per document — no need for handlers to discover which file they're
+   in at runtime.
 
-   `NetexPlugin` already solves the analogous problem on the read side via
-   `endDocument(documentName: String)` (added in `3e249a4`). Mirroring that
-   shape on the write side is the minimal change. Three possible surfaces,
-   roughly in order of preference:
+5. **Full-path handler keys.** `customElementHandlers` keys are matched
+   against `Element.path()` — the full ancestor chain from the document
+   root (e.g. `/PublicationDelivery/dataObjects/CompositeFrame/frames/
+   ServiceFrame/serviceLinks`). NeTEx files vary in structure, but
+   `buildEntityModel` runs first, so servicelinker can discover the actual
+   `ServiceFrame` path from the entity model and construct handler
+   registrations using the correct prefix. No API change needed.
 
-   1. **Lifecycle hooks on `XMLElementHandler`.** Add
-      `startDocument(documentName)` / `endDocument(documentName)` default
-      methods so a handler can cache the current document name as
-      per-instance state and read it back inside element callbacks. Keeps a
-      single handler instance across the batch, matches the plugin model,
-      zero churn on `FilterConfig`.
-   2. **Handler factory on `FilterConfig`.** Let
-      `withCustomElementHandlers(...)` accept a factory
-      `(documentName) -> Map<Path, XMLElementHandler>` so each document gets
-      fresh handler instances constructed with the right plan baked in.
-      Cleaner separation at the cost of handler allocation per file.
-   3. **Filename parameter on every callback.** Add `documentName: String`
-      to `startElement` / `characters` / `endElement`. Mechanical but breaks
-      every existing handler (including ashur's).
-
-   Option 1 is lowest-friction and symmetric with the existing plugin API.
-   Without any of these, the only workaround is calling
-   `exportToByteArrays` once per document with a per-document
-   `FilterConfig`, which defeats batching and complicates the servicelinker
-   call site.
+6. **Subtree skipping for `linksInSequence`.** Solved by combining entity
+   selection with `elementsRequiredChildren`. For JPs with planned
+   replacements, remove their existing `ServiceLinkInJourneyPattern`
+   entities from the entity selection after `selectEntities()`. Children
+   of excluded entities are automatically excluded via ancestor-checking
+   in `InclusionPolicy`. Configure `elementsRequiredChildren` with
+   `"linksInSequence" -> listOf("ServiceLinkInJourneyPattern")` so the
+   empty `linksInSequence` wrapper is dropped by the deferred-events
+   rule. The `JourneyPatternHandler` then emits the merged replacement
+   in `endElement`. JPs not in the plan keep their original
+   `linksInSequence` intact — their SLIJP entities are still in the
+   selection. Works with today's API.
 
 ### Nice-to-have
 
-5. **Ergonomic injection hooks (`beforeEndElement` / `afterStartElement`).**
+7. **Ergonomic injection hooks (`beforeEndElement` / `afterStartElement`).**
    Currently proposed on branch `henrik/element-injection-hooks` (netex-tools
    `b7ed529`). Not a capability gap — sibling injection already works via the
    three existing hooks — but the split avoids the "remember to forward the
@@ -221,13 +214,13 @@ between Pass 1 and Pass 2 regardless of framework.
    their own writes with pass-through of the triggering event. Treat as an
    API-clarity contribution rather than a blocker.
 
-6. **Event buffering API.** netex-tools has `EventBuffer` and
+8. **Event buffering API.** netex-tools has `EventBuffer` and
    `ParentsWithRequiredChildrenDeferEventsRule` for deferring events. Exposing
    a public "buffer-and-replace" pattern would simplify the `linksInSequence`
    merge (buffer existing, discard, write replacement) so servicelinker
    doesn't reimplement event buffering inside a handler.
 
-7. **Schema-ordered insertion helper.** The hard part of `<serviceLinks>`
+9. **Schema-ordered insertion helper.** The hard part of `<serviceLinks>`
    injection isn't emitting the element — it's choosing *where*: after
    `<scheduledStopPoints>` if it exists, else after an existing
    `<serviceLinks>`, else before `<journeyPatterns>` (the
@@ -266,8 +259,48 @@ between Pass 1 and Pass 2 regardless of framework.
 3. ~~Implement Pass 1 plugins and validate via DOM parity.~~ Done.
 4. ~~Remove DOM extraction code.~~ Done — `NetexProcessor` now owns routing,
    plan building, and StAX injection only.
-5. Migrate Pass 2 to `XMLElementHandler`s. Depends on per-file context
-   (item 4); the other items in "Nice-to-have" can land incrementally
-   after the initial cutover.
+5. Migrate Pass 2 to `XMLElementHandler`s. No new netex-tools API needed
+   — see items 4-6 above. Nice-to-have items can land incrementally.
+
+   **5a. Implement XMLElementHandler classes in servicelinker.** Three
+   handlers, all constructed with the current document's `InjectionPlan`:
+
+   | Handler | Registered path | Behavior |
+   |---|---|---|
+   | `ServiceLinksHandler` | `…/ServiceFrame/serviceLinks` | `endElement`: append new `ServiceLink` elements, then forward close tag. If section doesn't exist, registered on `ServiceFrame` instead and emits the new section in `endElement` before forwarding the close tag. |
+   | `ScheduledStopPointsHandler` | `…/ServiceFrame/scheduledStopPoints` | `endElement`: append stub `ScheduledStopPoint` elements, then forward close tag. Same `ServiceFrame`-level fallback. |
+   | `JourneyPatternHandler` | `…/journeyPatterns/JourneyPattern` | `startElement`: read `id` attribute. `endElement`: if JP has planned links, emit merged `<linksInSequence>` before forwarding close tag. |
+
+   Handler paths are full paths discovered during `buildEntityModel` (the
+   entity model records which paths exist). The `linksInSequence`
+   replacement uses entity selection + `elementsRequiredChildren` (see
+   item 6): exclude existing SLIJP entities for targeted JPs from the
+   selection so the subtree is dropped, then have the
+   `JourneyPatternHandler` emit the merged replacement.
+
+   For schema-ordered "insert new section" (no existing `<serviceLinks>`
+   or `<scheduledStopPoints>` in the file), the `ServiceFrame`-level
+   fallback handler emits new sections before the close tag, after all
+   existing children have passed through.
+
+   **5b. Wire up handlers in `NetexProcessor.applyPlan()`.**
+   Replace the `StaxNetexTransformer.transform()` call with:
+   ```
+   1. buildEntityModel(mapOf(name to bytes))
+      — registers all entities so the inclusion policy keeps everything
+   2. selectEntities()
+      — returns all entities with default config
+   3. Remove SLIJP entities for JPs with planned replacements from
+      the entity selection
+   4. Build FilterConfig with customElementHandlers from InjectionPlan
+      and elementsRequiredChildren for linksInSequence
+   5. exportToByteArrays(mapOf(name to bytes), entitySelection, refSelection)
+   ```
+   Validate with the existing `StaxNetexTransformerTest` suite — the
+   tests verify output structure and content, not implementation details.
+
+   **5c. Remove `StaxNetexTransformer`.**
+   Once all tests pass against the handler-based implementation, delete
+   `StaxNetexTransformer.kt` and its test class.
 
 Each phase can be done independently and rolled back without affecting the other.

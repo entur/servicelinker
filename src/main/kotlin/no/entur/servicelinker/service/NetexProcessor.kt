@@ -1,6 +1,7 @@
 package no.entur.servicelinker.service
 
 import kotlinx.coroutines.CancellationException
+import no.entur.servicelinker.handlers.buildHandlerMap
 import no.entur.servicelinker.model.ExistingSlijpInfo
 import no.entur.servicelinker.model.InjectionPlan
 import no.entur.servicelinker.model.OSRMRoute
@@ -11,6 +12,8 @@ import no.entur.servicelinker.model.SlijpEntry
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.plugins.Pass1PluginExtractor
+import org.entur.netex.tools.lib.NetexProcessor as NetexToolsProcessor
+import org.entur.netex.tools.lib.config.FilterConfig
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.io.InputStream
@@ -19,7 +22,6 @@ import java.io.InputStream
 @Service
 class NetexProcessor(
     private val osrmService: OSRMService,
-    private val staxTransformer: StaxNetexTransformer,
     private val pass1Extractor: Pass1PluginExtractor,
 ) {
     private val logger = LoggerFactory.getLogger(NetexProcessor::class.java)
@@ -83,7 +85,7 @@ class NetexProcessor(
             needsGmlNamespace = true
         )
 
-        val modifiedXml = staxTransformer.transform(inputBytes, plan)
+        val modifiedXml = applyPlan(inputBytes, plan)
         logger.info("NeTEx processing completed. Added $addedCount service links")
         return ProcessedDataset(modifiedXml, addedCount)
     }
@@ -120,9 +122,63 @@ class NetexProcessor(
         return result
     }
 
-    /** Apply a pre-built InjectionPlan to raw XML bytes via StAX streaming. */
-    fun applyPlan(input: ByteArray, plan: InjectionPlan): ByteArray =
-        staxTransformer.transform(input, plan)
+    /** Apply a pre-built InjectionPlan to raw XML bytes via netex-tools handlers. */
+    fun applyPlan(input: ByteArray, plan: InjectionPlan): ByteArray {
+        if (plan.isEmpty) return input
+
+        val handlers = buildHandlerMap(plan)
+        val filterConfig = FilterConfig(
+            customElementHandlers = handlers,
+            // linksInSequence elements whose SLIJP children are excluded from the
+            // entity selection become childless; this rule drops the empty wrapper.
+            // Note: matches by element name, so linksInSequence inside Route (which
+            // uses RouteLinkInSequence, not ServiceLinkInJourneyPattern) would also
+            // be affected — acceptable since Norwegian NeTEx data does not use that.
+            elementsRequiredChildren = if (plan.journeyPatternLinks.isNotEmpty())
+                mapOf("linksInSequence" to listOf("ServiceLinkInJourneyPattern"))
+            else emptyMap(),
+        )
+        val processor = NetexToolsProcessor(filterConfig = filterConfig)
+        val docName = "doc.xml"
+        val docs = mapOf(docName to input)
+        processor.buildEntityModel(docs)
+
+        // Exclude existing SLIJP entities whose parent JP has planned replacements.
+        // This drops the existing linksInSequence subtree so the JourneyPatternHandler
+        // can emit the merged replacement.
+        val slijpIdsToExclude = processor.model
+            .getEntitiesOfType("ServiceLinkInJourneyPattern")
+            .filter { plan.journeyPatternLinks.containsKey(it.parent?.id) }
+            .map { it.id }
+            .toSet()
+
+        val (entitySelection, refSelection) = processor.selectEntities()
+
+        val modifiedSelection = if (slijpIdsToExclude.isNotEmpty()) {
+            val slijpMap = entitySelection.selection["ServiceLinkInJourneyPattern"]
+            if (slijpMap != null) {
+                entitySelection.withReplaced(
+                    "ServiceLinkInJourneyPattern",
+                    slijpMap.filterKeys { it !in slijpIdsToExclude }
+                )
+            } else entitySelection
+        } else entitySelection
+
+        val result = processor.exportToByteArrays(docs, modifiedSelection, refSelection)
+        val output = requireNotNull(result.documents[docName])
+        return rewriteGmlPrefix(output)
+    }
+
+    /**
+     * Rewrite any `gml:` GML namespace prefix to the Entur convention `gis:`.
+     * The SAX pipeline passes through whatever prefix the input uses; this
+     * normalizes the output to always use `gis:` in a single pass.
+     */
+    private fun rewriteGmlPrefix(xml: ByteArray): ByteArray {
+        val text = String(xml, Charsets.UTF_8)
+        if (!text.contains("xmlns:gml=")) return xml
+        return GML_PREFIX_PATTERN.replace(text, "gis").toByteArray(Charsets.UTF_8)
+    }
 
     /** Create a ServiceLinkData object from a routed stop pair. Pure data, no DOM. */
     fun createServiceLinkData(pair: StationPair, route: OSRMRoute?): ServiceLinkData {
@@ -268,5 +324,9 @@ class NetexProcessor(
         }
 
         const val MAX_ROUTE_DISTANCE_METERS = 5_000_000 // 5000 km — sanity limit
+
+        /** Matches `gml` when used as an XML namespace prefix — in declarations,
+         *  element tags, or namespace-qualified attributes. Single-pass replacement. */
+        private val GML_PREFIX_PATTERN = Regex("""(?<=xmlns:|</?| )gml(?=[:=])""")
     }
 }

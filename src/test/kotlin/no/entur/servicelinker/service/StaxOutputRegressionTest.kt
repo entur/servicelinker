@@ -36,7 +36,6 @@ class StaxOutputRegressionTest {
 
     private lateinit var mockOsrmService: OSRMService
     private lateinit var netexProcessor: NetexProcessor
-    private lateinit var staxTransformer: StaxNetexTransformer
 
     private val oslo = Coordinate(59.9139, 10.7522)
     private val lillestrøm = Coordinate(59.9556, 11.0464)
@@ -47,8 +46,7 @@ class StaxOutputRegressionTest {
     @BeforeEach
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
-        staxTransformer = StaxNetexTransformer()
-        netexProcessor = NetexProcessor(mockOsrmService, staxTransformer, Pass1PluginExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, Pass1PluginExtractor())
 
         coEvery {
             mockOsrmService.calculateRoute(any(), any(), any())

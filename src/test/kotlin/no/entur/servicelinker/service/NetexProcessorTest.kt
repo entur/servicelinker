@@ -33,7 +33,7 @@ class NetexProcessorTest {
     @BeforeEach
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, StaxNetexTransformer(), Pass1PluginExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, Pass1PluginExtractor())
     }
 
     private fun getSampleNetexInputStream(): InputStream {

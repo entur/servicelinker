@@ -38,7 +38,7 @@ class ZipHandlingTest {
         mockOsrmService = mockk(relaxed = true)
         mockGcsService = mockk(relaxed = true)
         mockNsrService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, StaxNetexTransformer(), Pass1PluginExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, Pass1PluginExtractor())
         serviceLinkProducerService = ServiceLinkProducerService(
             mockGcsService, netexProcessor, mockOsrmService, mockNsrService, Pass1PluginExtractor(), "test-output"
         )

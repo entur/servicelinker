@@ -24,6 +24,7 @@ version = "0.0.1-SNAPSHOT"
 description = "Servicelink producer"
 
 repositories {
+    mavenLocal()
     mavenCentral()
 }
 
