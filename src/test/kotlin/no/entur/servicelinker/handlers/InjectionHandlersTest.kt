@@ -269,6 +269,82 @@ class InjectionHandlersTest {
             "LineString should not carry its own xmlns:gis declaration")
     }
 
+    @Test
+    fun `GML namespace hoisted to root when input already declares xmlns gis`() {
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex"
+                                xmlns:gis="http://www.opengis.net/gml/3.2" version="1.0">
+              <dataObjects>
+                <CompositeFrame id="CF:1" version="1"><frames>
+                  <ServiceFrame id="SF:1" version="1">
+                    <journeyPatterns>
+                      <JourneyPattern id="JP:1" version="1">
+                        <pointsInSequence/>
+                      </JourneyPattern>
+                    </journeyPatterns>
+                  </ServiceFrame>
+                </frames></CompositeFrame>
+              </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent()
+
+        val plan = InjectionPlan(
+            newServiceLinks = listOf(sampleServiceLink()),
+            stubScheduledStopPoints = emptyMap(),
+            journeyPatternLinks = emptyMap(),
+        )
+
+        val result = applyViaHandlers(xml, plan)
+        val output = String(result, Charsets.UTF_8)
+
+        val rootLine = output.lines().first { it.contains("<PublicationDelivery") }
+        assertTrue(rootLine.contains("xmlns:gis="),
+            "GML namespace should be on root element")
+        assertFalse(output.contains("<gis:LineString xmlns:gis="),
+            "LineString should not carry its own xmlns:gis declaration")
+    }
+
+    @Test
+    fun `GML namespace declarations are deduplicated when input has gis and gml`() {
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex"
+                                xmlns:gis="http://www.opengis.net/gml/3.2"
+                                xmlns:gml="http://www.opengis.net/gml/3.2" version="1.0">
+              <dataObjects>
+                <CompositeFrame id="CF:1" version="1"><frames>
+                  <ServiceFrame id="SF:1" version="1">
+                    <journeyPatterns>
+                      <JourneyPattern id="JP:1" version="1">
+                        <pointsInSequence/>
+                      </JourneyPattern>
+                    </journeyPatterns>
+                  </ServiceFrame>
+                </frames></CompositeFrame>
+              </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent()
+
+        val plan = InjectionPlan(
+            newServiceLinks = listOf(sampleServiceLink()),
+            stubScheduledStopPoints = emptyMap(),
+            journeyPatternLinks = emptyMap(),
+        )
+
+        val result = applyViaHandlers(xml, plan)
+        val output = String(result, Charsets.UTF_8)
+
+        assertTrue(output.contains("xmlns:gis=\"http://www.opengis.net/gml/3.2\""),
+            "Output should declare gis namespace")
+        assertFalse(output.contains("xmlns:gml="),
+            "Output should not keep gml namespace declaration")
+        assertEquals(1, Regex("xmlns:gis=").findAll(output).count(),
+            "Output should contain only one xmlns:gis declaration")
+        assertFalse(output.contains("<gis:LineString xmlns:gis="),
+            "LineString should not carry its own xmlns:gis declaration")
+    }
+
     private fun sampleServiceLink() = ServiceLinkData(
         id = "SL:A-B", version = "1", distance = 1000,
         projectionId = "LSP:1", gmlLineStringId = "ls_1",

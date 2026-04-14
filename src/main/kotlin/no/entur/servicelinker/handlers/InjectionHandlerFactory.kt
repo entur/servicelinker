@@ -4,6 +4,7 @@ import no.entur.servicelinker.model.InjectionPlan
 import org.entur.netex.tools.lib.output.DelegatingXMLElementWriter
 import org.entur.netex.tools.lib.output.XMLElementHandler
 import org.xml.sax.Attributes
+import org.xml.sax.helpers.AttributesImpl
 
 /**
  * Builds the `customElementHandlers` map for injecting ServiceLinks, stub
@@ -33,16 +34,11 @@ object InjectionHandlerFactory {
         "displayAssignments", "passengerInformationEquipments",
     )
 
-    fun buildHandlerMap(plan: InjectionPlan, inputHasGmlNamespace: Boolean = false): Map<String, XMLElementHandler> {
+    fun buildHandlerMap(plan: InjectionPlan): Map<String, XMLElementHandler> {
         val ctx = InjectionContext(plan)
         val handlers = mutableMapOf<String, XMLElementHandler>()
 
-        // Hoist xmlns:gis= to root element when the input doesn't already
-        // declare the GML namespace. When it does (as gis: or gml:), the
-        // declaration passes through as a regular attribute and rewriteGmlPrefix
-        // normalizes it — adding startPrefixMapping on top would cause a
-        // duplicate xmlns:gis after rewriting.
-        if (plan.newServiceLinks.isNotEmpty() && !inputHasGmlNamespace) {
+        if (plan.newServiceLinks.isNotEmpty()) {
             handlers["/PublicationDelivery"] = GmlNamespaceHandler()
         }
 
@@ -64,16 +60,39 @@ object InjectionHandlerFactory {
 // Handler implementations — package-private, used only by the factory
 // ---------------------------------------------------------------------------
 
-/** Declares the gis: prefix on the root element so GML elements don't each carry their own declaration. */
+/**
+ * Declares the gis: prefix on the root element via startPrefixMapping so
+ * injected GML elements don't each carry their own xmlns:gis declaration.
+ * Strips any pass-through xmlns:gml/xmlns:gis attribute to avoid a duplicate
+ * declaration (the non-namespace-aware parser passes these as regular attrs).
+ */
 private class GmlNamespaceHandler : PassThroughHandler() {
     override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes?, writer: DelegatingXMLElementWriter) {
         writer.startPrefixMapping(GML_PREFIX, GML_NS)
-        writer.startElement(uri, localName, qName, attributes)
+        writer.startElement(uri, localName, qName, stripGmlNamespaceAttr(attributes))
     }
 
     override fun endElement(uri: String?, localName: String?, qName: String?, writer: DelegatingXMLElementWriter) {
         writer.endElement(uri, localName, qName)
         writer.endPrefixMapping(GML_PREFIX)
+    }
+
+    private fun stripGmlNamespaceAttr(attributes: Attributes?): Attributes? {
+        if (attributes == null) return null
+        val filtered = AttributesImpl()
+        var removedAny = false
+        for (i in 0 until attributes.length) {
+            val qName = attributes.getQName(i)
+            if (qName == "xmlns:gml" || qName == "xmlns:gis") {
+                removedAny = true
+                continue
+            }
+            filtered.addAttribute(
+                attributes.getURI(i), attributes.getLocalName(i),
+                attributes.getQName(i), attributes.getType(i), attributes.getValue(i),
+            )
+        }
+        return if (removedAny) filtered else attributes
     }
 }
 

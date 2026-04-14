@@ -125,14 +125,7 @@ class NetexProcessor(
     fun applyPlan(input: ByteArray, plan: InjectionPlan): ByteArray {
         if (plan.isEmpty) return input
 
-        // Check root element for existing GML namespace declaration (gis: or gml:).
-        // When present, skip the GmlNamespaceHandler — the declaration passes through
-        // as a regular attribute (non-namespace-aware parser) and rewriteGmlPrefix
-        // normalizes gml→gis afterwards.
-        val headerSize = minOf(input.size, 4096)
-        val header = String(input, 0, headerSize, Charsets.UTF_8)
-        val inputHasGml = "xmlns:gis=" in header || "xmlns:gml=" in header
-        val handlers = InjectionHandlerFactory.buildHandlerMap(plan, inputHasGml)
+        val handlers = InjectionHandlerFactory.buildHandlerMap(plan)
         val filterConfig = FilterConfig(
             customElementHandlers = handlers,
             // linksInSequence elements whose SLIJP children are excluded from the
@@ -182,7 +175,10 @@ class NetexProcessor(
      */
     private fun rewriteGmlPrefix(xml: ByteArray): ByteArray {
         val text = String(xml, Charsets.UTF_8)
-        if (!text.contains("xmlns:gml=")) return xml
+        // Coarse guard: any gml: start tag implies gml prefix usage in elements
+        // and attributes. Matching in CDATA/comments is harmless — the regex
+        // only rewrites actual prefix contexts.
+        if ("<gml:" !in text) return xml
         return GML_PREFIX_PATTERN.replace(text, "gis").toByteArray(Charsets.UTF_8)
     }
 
