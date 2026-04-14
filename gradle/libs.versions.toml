@@ -8,7 +8,7 @@ logstash-logback-encoder = "9.0"
 wiremock = "3.13.2"
 mockk = "1.14.9"
 testcontainers = "2.0.4"
-netex-tools = "0.0.46-SNAPSHOT"
+netex-tools = "0.0.46"
 
 [libraries]
 spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter" }
