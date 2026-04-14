@@ -99,7 +99,6 @@ class InjectionHandlersTest {
                     SlijpEntry("NEW:1", "1", 1, "SL:new", null)
                 )
             ),
-            needsGmlNamespace = false
         )
 
         val result = applyViaHandlers(xml, plan)
@@ -150,7 +149,6 @@ class InjectionHandlersTest {
             journeyPatternLinks = mapOf(
                 "JP:1" to listOf(SlijpEntry("SLIJP:1", "1", 1, "SL:A-B", null))
             ),
-            needsGmlNamespace = false
         )
 
         val result = applyViaHandlers(xml, plan)
@@ -210,7 +208,7 @@ class InjectionHandlersTest {
             newServiceLinks = listOf(sampleServiceLink()),
             stubScheduledStopPoints = emptyMap(),
             journeyPatternLinks = emptyMap(),
-            needsGmlNamespace = false
+
         )
 
         val result = applyViaHandlers(xml, plan)
@@ -218,6 +216,57 @@ class InjectionHandlersTest {
 
         assertTrue(output.contains("top-level comment"), "Top-level comment should be preserved")
         assertTrue(output.contains("comment inside ServiceFrame"), "ServiceFrame comment should be preserved")
+    }
+
+    // -----------------------------------------------------------------------
+    // GML namespace auto-declaration when input has no GML
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `GML namespace is declared when injecting ServiceLinks into file without GML`() {
+        // Input has no xmlns:gis or xmlns:gml declaration
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+              <dataObjects>
+                <CompositeFrame id="CF:1" version="1"><frames>
+                  <ServiceFrame id="SF:1" version="1">
+                    <journeyPatterns>
+                      <JourneyPattern id="JP:1" version="1">
+                        <pointsInSequence/>
+                      </JourneyPattern>
+                    </journeyPatterns>
+                  </ServiceFrame>
+                </frames></CompositeFrame>
+              </dataObjects>
+            </PublicationDelivery>
+        """.trimIndent()
+
+        assertFalse(xml.contains("gml"), "Test setup: input must not mention GML")
+
+        val plan = InjectionPlan(
+            newServiceLinks = listOf(sampleServiceLink()),
+            stubScheduledStopPoints = emptyMap(),
+            journeyPatternLinks = emptyMap(),
+        )
+
+        val result = applyViaHandlers(xml, plan)
+        val doc = parse(result)
+        val output = String(result, Charsets.UTF_8)
+
+        // GML namespace must be auto-declared for the injected geometry
+        val lineStrings = doc.getElementsByTagNameNS("http://www.opengis.net/gml/3.2", "LineString")
+        assertEquals(1, lineStrings.length, "LineString should be present with GML namespace")
+
+        val posLists = doc.getElementsByTagNameNS("http://www.opengis.net/gml/3.2", "posList")
+        assertEquals(1, posLists.length, "posList should be present with GML namespace")
+
+        // GML namespace should be declared on the root element, not on each LineString
+        val rootLine = output.lines().first { it.contains("<PublicationDelivery") }
+        assertTrue(rootLine.contains("xmlns:gis="),
+            "GML namespace should be declared on root element")
+        assertFalse(output.contains("<gis:LineString xmlns:gis="),
+            "LineString should not carry its own xmlns:gis declaration")
     }
 
     private fun sampleServiceLink() = ServiceLinkData(

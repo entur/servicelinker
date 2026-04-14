@@ -82,7 +82,6 @@ class NetexProcessor(
             jpStopSequences = pass1.stopSequences,
             existingSlijpEntries = pass1.existingSlijp,
             declaredStopIds = pass1.stopIdsAndVersions.keys,
-            needsGmlNamespace = true
         )
 
         val modifiedXml = applyPlan(inputBytes, plan)
@@ -126,7 +125,14 @@ class NetexProcessor(
     fun applyPlan(input: ByteArray, plan: InjectionPlan): ByteArray {
         if (plan.isEmpty) return input
 
-        val handlers = InjectionHandlerFactory.buildHandlerMap(plan)
+        // Check root element for existing GML namespace declaration (gis: or gml:).
+        // When present, skip the GmlNamespaceHandler — the declaration passes through
+        // as a regular attribute (non-namespace-aware parser) and rewriteGmlPrefix
+        // normalizes gml→gis afterwards.
+        val headerSize = minOf(input.size, 4096)
+        val header = String(input, 0, headerSize, Charsets.UTF_8)
+        val inputHasGml = "xmlns:gis=" in header || "xmlns:gml=" in header
+        val handlers = InjectionHandlerFactory.buildHandlerMap(plan, inputHasGml)
         val filterConfig = FilterConfig(
             customElementHandlers = handlers,
             // linksInSequence elements whose SLIJP children are excluded from the
@@ -220,7 +226,6 @@ class NetexProcessor(
         jpStopSequences: Map<String, List<String>>,
         existingSlijpEntries: Map<String, Map<String, ExistingSlijpInfo>>,
         declaredStopIds: Set<String>,
-        needsGmlNamespace: Boolean
     ): InjectionPlan {
         // Stub stops: referenced by new ServiceLinks but not declared in this file
         val referencedStops = mutableMapOf<String, String>()
@@ -281,7 +286,6 @@ class NetexProcessor(
             newServiceLinks = newServiceLinkData.values.toList(),
             stubScheduledStopPoints = stubStops,
             journeyPatternLinks = jpLinks,
-            needsGmlNamespace = needsGmlNamespace
         )
     }
 
@@ -300,7 +304,6 @@ class NetexProcessor(
         return buildInjectionPlan(
             newData, allServiceLinks, jpStopSequences,
             existingSlijpEntries, declaredStopIds,
-            needsGmlNamespace = newData.isNotEmpty()
         )
     }
 

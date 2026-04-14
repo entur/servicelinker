@@ -7,8 +7,6 @@ data class InjectionPlan(
     val stubScheduledStopPoints: Map<String, String>,
     /** Pre-merged linksInSequence entries per JourneyPattern. Key = JP id. */
     val journeyPatternLinks: Map<String, List<SlijpEntry>>,
-    /** Whether the GML namespace declaration needs to be ensured on the root element. */
-    val needsGmlNamespace: Boolean
 ) {
     val isEmpty: Boolean get() =
         newServiceLinks.isEmpty() && journeyPatternLinks.isEmpty() && stubScheduledStopPoints.isEmpty()

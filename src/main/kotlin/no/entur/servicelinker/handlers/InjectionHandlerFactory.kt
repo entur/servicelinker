@@ -33,9 +33,18 @@ object InjectionHandlerFactory {
         "displayAssignments", "passengerInformationEquipments",
     )
 
-    fun buildHandlerMap(plan: InjectionPlan): Map<String, XMLElementHandler> {
+    fun buildHandlerMap(plan: InjectionPlan, inputHasGmlNamespace: Boolean = false): Map<String, XMLElementHandler> {
         val ctx = InjectionContext(plan)
         val handlers = mutableMapOf<String, XMLElementHandler>()
+
+        // Hoist xmlns:gis= to root element when the input doesn't already
+        // declare the GML namespace. When it does (as gis: or gml:), the
+        // declaration passes through as a regular attribute and rewriteGmlPrefix
+        // normalizes it — adding startPrefixMapping on top would cause a
+        // duplicate xmlns:gis after rewriting.
+        if (plan.newServiceLinks.isNotEmpty() && !inputHasGmlNamespace) {
+            handlers["/PublicationDelivery"] = GmlNamespaceHandler()
+        }
 
         for (prefix in SERVICE_FRAME_PREFIXES) {
             handlers["$prefix/serviceLinks"] = ServiceLinksHandler(ctx)
@@ -54,6 +63,19 @@ object InjectionHandlerFactory {
 // ---------------------------------------------------------------------------
 // Handler implementations — package-private, used only by the factory
 // ---------------------------------------------------------------------------
+
+/** Declares the gis: prefix on the root element so GML elements don't each carry their own declaration. */
+private class GmlNamespaceHandler : PassThroughHandler() {
+    override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes?, writer: DelegatingXMLElementWriter) {
+        writer.startPrefixMapping(GML_PREFIX, GML_NS)
+        writer.startElement(uri, localName, qName, attributes)
+    }
+
+    override fun endElement(uri: String?, localName: String?, qName: String?, writer: DelegatingXMLElementWriter) {
+        writer.endElement(uri, localName, qName)
+        writer.endPrefixMapping(GML_PREFIX)
+    }
+}
 
 /** Pass-through base: forwards all events unchanged. Override the method that injects. */
 private open class PassThroughHandler : XMLElementHandler {

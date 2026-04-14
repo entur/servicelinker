@@ -522,7 +522,6 @@ class StaxOutputRegressionTest {
             jpStopSequences = jpStopSequences,
             existingSlijpEntries = existing,
             declaredStopIds = setOf("TST:SSP:A", "TST:SSP:B", "TST:SSP:C"),
-            needsGmlNamespace = true
         )
 
         // JP should have 2 merged entries
@@ -551,7 +550,6 @@ class StaxOutputRegressionTest {
             jpStopSequences = emptyMap(),
             existingSlijpEntries = emptyMap(),
             declaredStopIds = setOf("SSP:A"),  // B is NOT declared
-            needsGmlNamespace = true
         )
 
         assertEquals(1, plan.stubScheduledStopPoints.size)
@@ -569,7 +567,6 @@ class StaxOutputRegressionTest {
             jpStopSequences = mapOf("TST:JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
             existingSlijpEntries = emptyMap(),
             declaredStopIds = emptySet(),
-            needsGmlNamespace = false
         )
 
         val jpLinks = requireNotNull(plan.journeyPatternLinks["TST:JP:1"])
@@ -585,7 +582,6 @@ class StaxOutputRegressionTest {
             jpStopSequences = mapOf("TST:JP:1" to listOf("SSP:A", "SSP:B")),
             existingSlijpEntries = emptyMap(),
             declaredStopIds = emptySet(),
-            needsGmlNamespace = false
         )
 
         assertTrue(plan.isEmpty, "Plan should be empty when no service links exist")
