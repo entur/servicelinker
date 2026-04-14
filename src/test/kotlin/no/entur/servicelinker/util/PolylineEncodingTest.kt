@@ -7,9 +7,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import java.io.File
 import kotlin.test.Test
 
-
 class PolylineEncodingTest {
-
     private val MAX_DIFF = 0.00001.toBigDecimal()
 
     @Test
@@ -35,8 +33,9 @@ class PolylineEncodingTest {
 
         assertEquals(decodedCoordinates.size, 845)
         assertEquals(
-            expectedCoordinates.size, decodedCoordinates.size,
-            "Decoded coordinates count should match expected coordinates count"
+            expectedCoordinates.size,
+            decodedCoordinates.size,
+            "Decoded coordinates count should match expected coordinates count",
         )
 
         for (i in expectedCoordinates.indices) {
@@ -48,11 +47,11 @@ class PolylineEncodingTest {
 
             assertTrue(
                 latDiff < MAX_DIFF,
-                "Latitude difference too large at index $i: expected ${expected.latitude}, actual ${actual.latitude}"
+                "Latitude difference too large at index $i: expected ${expected.latitude}, actual ${actual.latitude}",
             )
             assertTrue(
                 lonDiff < MAX_DIFF,
-                "Longitude difference too large at index $i: expected ${expected.longitude}, actual ${actual.longitude}"
+                "Longitude difference too large at index $i: expected ${expected.longitude}, actual ${actual.longitude}",
             )
         }
         val reEncodedPolyline = PolylineEncoding.encode(decodedCoordinates)

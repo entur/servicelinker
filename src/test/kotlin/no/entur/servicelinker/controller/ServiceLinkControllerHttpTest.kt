@@ -13,7 +13,6 @@ import org.springframework.test.web.servlet.post
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 
 class ServiceLinkControllerHttpTest {
-
     private lateinit var mockService: ServiceLinkProducerService
     private lateinit var mockMvc: MockMvc
 
@@ -26,13 +25,14 @@ class ServiceLinkControllerHttpTest {
     @Test
     fun `bracket notation modes=BUS,TRAM is parsed into setOf BUS, TRAM`() {
         coEvery { mockService.processXmlContentDirectly(any(), any(), setOf("BUS", "TRAM")) } returns
-                DirectProcessingResult(true, "<result/>", 1)
+            DirectProcessingResult(true, "<result/>", 1)
 
-        mockMvc.post("/api/servicelink/process-xml") {
-            param("modes", "[BUS,TRAM]")
-            contentType = MediaType.parseMediaType("application/xml")
-            content = "<xml/>"
-        }.andExpect { status { isOk() } }
+        mockMvc
+            .post("/api/servicelink/process-xml") {
+                param("modes", "[BUS,TRAM]")
+                contentType = MediaType.parseMediaType("application/xml")
+                content = "<xml/>"
+            }.andExpect { status { isOk() } }
 
         coVerify { mockService.processXmlContentDirectly(any(), any(), setOf("BUS", "TRAM")) }
     }
@@ -40,13 +40,14 @@ class ServiceLinkControllerHttpTest {
     @Test
     fun `bracket notation modes=empty is parsed into emptySet`() {
         coEvery { mockService.processXmlContentDirectly(any(), any(), emptySet()) } returns
-                DirectProcessingResult(true, "<result/>", 0)
+            DirectProcessingResult(true, "<result/>", 0)
 
-        mockMvc.post("/api/servicelink/process-xml") {
-            param("modes", "[]")
-            contentType = MediaType.parseMediaType("application/xml")
-            content = "<xml/>"
-        }.andExpect { status { isOk() } }
+        mockMvc
+            .post("/api/servicelink/process-xml") {
+                param("modes", "[]")
+                contentType = MediaType.parseMediaType("application/xml")
+                content = "<xml/>"
+            }.andExpect { status { isOk() } }
 
         coVerify { mockService.processXmlContentDirectly(any(), any(), emptySet()) }
     }
@@ -54,12 +55,13 @@ class ServiceLinkControllerHttpTest {
     @Test
     fun `no modes param passes null`() {
         coEvery { mockService.processXmlContentDirectly(any(), any(), null) } returns
-                DirectProcessingResult(true, "<result/>", 0)
+            DirectProcessingResult(true, "<result/>", 0)
 
-        mockMvc.post("/api/servicelink/process-xml") {
-            contentType = MediaType.parseMediaType("application/xml")
-            content = "<xml/>"
-        }.andExpect { status { isOk() } }
+        mockMvc
+            .post("/api/servicelink/process-xml") {
+                contentType = MediaType.parseMediaType("application/xml")
+                content = "<xml/>"
+            }.andExpect { status { isOk() } }
 
         coVerify { mockService.processXmlContentDirectly(any(), any(), null) }
     }

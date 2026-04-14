@@ -9,5 +9,5 @@ import org.springframework.boot.runApplication
 class ServicelinkerApplication
 
 fun main(args: Array<String>) {
-	runApplication<ServicelinkerApplication>(*args)
+    runApplication<ServicelinkerApplication>(*args)
 }

@@ -1,11 +1,11 @@
 package no.entur.servicelinker.service
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMResponse
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.TransportMode
-import com.github.benmanes.caffeine.cache.Cache
-import com.github.benmanes.caffeine.cache.Caffeine
 import org.slf4j.LoggerFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
@@ -23,53 +23,65 @@ data class OsrmProperties(
     val timeout: Long = 30000,
     val cacheRoutes: Boolean = true,
     val cacheMaxSize: Int = 40_000,
-    val cacheTtlHours: Int = 24
+    val cacheTtlHours: Int = 24,
 )
 
 @Service
 class OSRMService(
-    private val osrmProperties: OsrmProperties
+    private val osrmProperties: OsrmProperties,
 ) {
     private val logger = LoggerFactory.getLogger(OSRMService::class.java)
     private val webClients = ConcurrentHashMap<String, WebClient>()
 
     // LRU cache: ~2 KB avg per entry (polyline geometry), 40k entries ≈ 80 MB; entries expire after 24h
-    private val routeCache: Cache<String, OSRMRoute> = Caffeine.newBuilder()
-        .maximumSize(osrmProperties.cacheMaxSize.toLong())
-        .expireAfterWrite(osrmProperties.cacheTtlHours.toLong(), TimeUnit.HOURS)
-        .build()
+    private val routeCache: Cache<String, OSRMRoute> =
+        Caffeine
+            .newBuilder()
+            .maximumSize(osrmProperties.cacheMaxSize.toLong())
+            .expireAfterWrite(osrmProperties.cacheTtlHours.toLong(), TimeUnit.HOURS)
+            .build()
 
-    private fun getWebClient(baseUrl: String): WebClient {
-        return webClients.computeIfAbsent(baseUrl) {
-            WebClient.builder()
+    private fun getWebClient(baseUrl: String): WebClient =
+        webClients.computeIfAbsent(baseUrl) {
+            WebClient
+                .builder()
                 .baseUrl(baseUrl)
                 .clientConnector(
                     ReactorClientHttpConnector(
-                        HttpClient.create()
+                        HttpClient
+                            .create()
                             .followRedirect(true)
-                            .responseTimeout(Duration.ofMillis(osrmProperties.timeout))
-                    )
-                )
-                .build()
+                            .responseTimeout(Duration.ofMillis(osrmProperties.timeout)),
+                    ),
+                ).build()
         }
-    }
 
     private fun getBaseUrl(transportMode: TransportMode?): String {
-        val key = when (transportMode) {
-            TransportMode.BUS, TransportMode.COACH -> "bus"
-            TransportMode.RAIL, TransportMode.TRAM, TransportMode.METRO -> "rail"
-            TransportMode.FERRY -> "ferry"
-            TransportMode.WATER -> "water"
-            else -> "default"
-        }
+        val key =
+            when (transportMode) {
+                TransportMode.BUS, TransportMode.COACH -> "bus"
+                TransportMode.RAIL, TransportMode.TRAM, TransportMode.METRO -> "rail"
+                TransportMode.FERRY -> "ferry"
+                TransportMode.WATER -> "water"
+                else -> "default"
+            }
         return osrmProperties.urls[key]
             ?: osrmProperties.urls["default"]
             ?: error("No OSRM URL configured for mode '$key' and no default URL set")
     }
 
-    suspend fun calculateRoute(from: Coordinate, to: Coordinate, transportMode: TransportMode?): OSRMRoute? {
+    suspend fun calculateRoute(
+        from: Coordinate,
+        to: Coordinate,
+        transportMode: TransportMode?,
+    ): OSRMRoute? {
         val modeKey = transportMode?.name ?: "DEFAULT"
-        val cacheKey = if (osrmProperties.cacheRoutes) "$modeKey:${from.longitude},${from.latitude}-${to.longitude},${to.latitude}" else null
+        val cacheKey =
+            if (osrmProperties.cacheRoutes) {
+                "$modeKey:${from.longitude},${from.latitude}-${to.longitude},${to.latitude}"
+            } else {
+                null
+            }
 
         cacheKey?.let { key ->
             routeCache.getIfPresent(key)?.let { cachedRoute ->
@@ -86,12 +98,15 @@ class OSRMService(
             val overview = if (from.haversineDistanceTo(to) > SIMPLIFIED_THRESHOLD_METERS) "simplified" else "full"
             logger.debug("Calculating route from $from to $to using OSRM at $baseUrl (mode: $modeKey, overview: $overview)")
 
-            val response = webClient.get()
-                .uri("/route/v1/driving/{coordinates}?alternatives=false&steps=false&overview={overview}&geometries=polyline") { uriBuilder ->
-                    uriBuilder.build(coordinates, overview)
-                }
-                .retrieve()
-                .awaitBody<OSRMResponse>()
+            val response =
+                webClient
+                    .get()
+                    .uri(
+                        "/route/v1/driving/{coordinates}?alternatives=false&steps=false&overview={overview}&geometries=polyline",
+                    ) { uriBuilder ->
+                        uriBuilder.build(coordinates, overview)
+                    }.retrieve()
+                    .awaitBody<OSRMResponse>()
 
             val route = response.routes.firstOrNull()
 

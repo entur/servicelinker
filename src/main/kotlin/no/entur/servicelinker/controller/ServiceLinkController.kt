@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*
 @RestController
 @RequestMapping("/api/servicelink")
 class ServiceLinkController(
-    private val serviceLinkProducerService: ServiceLinkProducerService
+    private val serviceLinkProducerService: ServiceLinkProducerService,
 ) {
     private val logger = LoggerFactory.getLogger(ServiceLinkController::class.java)
 
@@ -19,18 +19,20 @@ class ServiceLinkController(
         @RequestBody xmlContent: String,
         @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.xml",
         @RequestParam(required = false) modes: String? = null,
-        @RequestParam(required = false) limit: Int? = null
+        @RequestParam(required = false) limit: Int? = null,
     ): ResponseEntity<String> {
         logger.info("Manual XML processing request for file: $filename, modes: $modes, limit: $limit")
 
         val result = serviceLinkProducerService.processXmlContentDirectly(xmlContent, filename, parseModes(modes), limit)
 
         return if (result.success) {
-            ResponseEntity.ok()
+            ResponseEntity
+                .ok()
                 .header("Content-Disposition", "attachment; filename=\"processed_$filename\"")
                 .body(result.processedXml)
         } else {
-            ResponseEntity.badRequest()
+            ResponseEntity
+                .badRequest()
                 .body("<?xml version=\"1.0\" encoding=\"UTF-8\"?><error>${result.errorMessage}</error>")
         }
     }
@@ -40,14 +42,15 @@ class ServiceLinkController(
         @RequestBody zipData: ByteArray,
         @RequestParam(required = false) filename: String = "manual_upload_${System.currentTimeMillis()}.zip",
         @RequestParam(required = false) modes: String? = null,
-        @RequestParam(required = false) limit: Int? = null
+        @RequestParam(required = false) limit: Int? = null,
     ): ResponseEntity<ByteArray> {
         logger.info("Manual ZIP processing request for file: $filename, modes: $modes, limit: $limit")
 
         return try {
             val (processedZip, addedCount) = serviceLinkProducerService.processZipDirectly(zipData, parseModes(modes), limit)
             logger.info("Successfully processed ZIP. Added $addedCount ServiceLinks for file: $filename")
-            ResponseEntity.ok()
+            ResponseEntity
+                .ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"processed_$filename\"")
                 .contentType(MediaType.parseMediaType("application/zip"))
                 .body(processedZip)
@@ -59,7 +62,9 @@ class ServiceLinkController(
 
     private fun parseModes(modes: String?): Set<String>? {
         if (modes == null) return null
-        return modes.trim().removeSurrounding("[", "]")
+        return modes
+            .trim()
+            .removeSurrounding("[", "]")
             .split(",")
             .map { it.trim().uppercase() }
             .filter { it.isNotBlank() }

@@ -20,7 +20,6 @@ import org.springframework.stereotype.Service
  */
 @Service
 class Pass1PluginExtractor {
-
     fun extract(documents: Map<String, ByteArray>): Pass1Results {
         val stopPointPlugin = StopPointPlugin()
         val stopAssignmentPlugin = StopAssignmentPlugin()
@@ -28,37 +27,43 @@ class Pass1PluginExtractor {
         val journeyPatternPlugin = JourneyPatternPlugin()
         val lineRoutePlugin = LineRoutePlugin()
 
-        val filterConfig = FilterConfig(
-            plugins = listOf(
-                stopPointPlugin,
-                stopAssignmentPlugin,
-                serviceLinkPlugin,
-                journeyPatternPlugin,
-                lineRoutePlugin,
+        val filterConfig =
+            FilterConfig(
+                plugins =
+                    listOf(
+                        stopPointPlugin,
+                        stopAssignmentPlugin,
+                        serviceLinkPlugin,
+                        journeyPatternPlugin,
+                        lineRoutePlugin,
+                    ),
             )
-        )
         NetexProcessor(CliConfig(), filterConfig).buildEntityModel(documents)
 
-        val perDoc = documents.keys.associateWith { name ->
-            DocResults(
-                stopPoints = stopPointPlugin.stopPoints[name].orEmpty(),
-                stopIdsAndVersions = stopPointPlugin.stopIdsAndVersions[name].orEmpty(),
-                assignments = stopAssignmentPlugin.assignments[name].orEmpty(),
-                existingServiceLinks = serviceLinkPlugin.serviceLinks[name].orEmpty(),
-                stopSequences = journeyPatternPlugin.stopSequences[name].orEmpty(),
-                existingSlijp = journeyPatternPlugin.existingSlijp[name].orEmpty(),
-                jpModeMap = resolveJpModeMap(
-                    journeyPatternPlugin.jpModeInputs[name].orEmpty(),
-                    lineRoutePlugin.lineModes[name].orEmpty(),
-                    lineRoutePlugin.routeToLine[name].orEmpty(),
+        val perDoc =
+            documents.keys.associateWith { name ->
+                DocResults(
+                    stopPoints = stopPointPlugin.stopPoints[name].orEmpty(),
+                    stopIdsAndVersions = stopPointPlugin.stopIdsAndVersions[name].orEmpty(),
+                    assignments = stopAssignmentPlugin.assignments[name].orEmpty(),
+                    existingServiceLinks = serviceLinkPlugin.serviceLinks[name].orEmpty(),
+                    stopSequences = journeyPatternPlugin.stopSequences[name].orEmpty(),
+                    existingSlijp = journeyPatternPlugin.existingSlijp[name].orEmpty(),
+                    jpModeMap =
+                        resolveJpModeMap(
+                            journeyPatternPlugin.jpModeInputs[name].orEmpty(),
+                            lineRoutePlugin.lineModes[name].orEmpty(),
+                            lineRoutePlugin.routeToLine[name].orEmpty(),
+                        ),
                 )
-            )
-        }
+            }
         return Pass1Results(perDoc)
     }
 
-    fun extract(name: String, bytes: ByteArray): DocResults =
-        extract(mapOf(name to bytes)).forDocument(name)
+    fun extract(
+        name: String,
+        bytes: ByteArray,
+    ): DocResults = extract(mapOf(name to bytes)).forDocument(name)
 
     companion object {
         /**
@@ -74,12 +79,13 @@ class Pass1PluginExtractor {
         ): Map<String, TransportMode?> {
             val out = LinkedHashMap<String, TransportMode?>(inputs.size)
             for ((jpId, mi) in inputs) {
-                val resolved: TransportMode? = when {
-                    mi.directMode != null -> mi.directMode
-                    mi.lineRef != null -> lineModes[mi.lineRef]
-                    mi.routeRef != null -> routeToLine[mi.routeRef]?.let { lineModes[it] }
-                    else -> null
-                }
+                val resolved: TransportMode? =
+                    when {
+                        mi.directMode != null -> mi.directMode
+                        mi.lineRef != null -> lineModes[mi.lineRef]
+                        mi.routeRef != null -> routeToLine[mi.routeRef]?.let { lineModes[it] }
+                        else -> null
+                    }
                 out[jpId] = resolved
             }
             return out
@@ -113,9 +119,12 @@ data class DocResults(
     }
 }
 
-data class Pass1Results(val byDocument: Map<String, DocResults>) {
-    fun forDocument(name: String): DocResults = byDocument[name]
-        ?: error("No results for document: $name (have: ${byDocument.keys})")
+data class Pass1Results(
+    val byDocument: Map<String, DocResults>,
+) {
+    fun forDocument(name: String): DocResults =
+        byDocument[name]
+            ?: error("No results for document: $name (have: ${byDocument.keys})")
 }
 
 /** Raw consecutive stop reference with the transport mode of the JP that introduced it. */

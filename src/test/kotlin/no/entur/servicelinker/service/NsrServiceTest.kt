@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
 class NsrServiceTest {
-
     private lateinit var nsrService: NsrService
     private lateinit var wireMock: WireMockServer
     private val port = 8091
@@ -21,11 +20,12 @@ class NsrServiceTest {
         wireMock = WireMockServer(WireMockConfiguration.options().port(port))
         wireMock.start()
 
-        val properties = NsrProperties(
-            baseUrl = "http://localhost:$port",
-            timeout = 5000,
-            cacheCoordinates = false
-        )
+        val properties =
+            NsrProperties(
+                baseUrl = "http://localhost:$port",
+                timeout = 5000,
+                cacheCoordinates = false,
+            )
         nsrService = NsrService(properties)
     }
 
@@ -35,143 +35,153 @@ class NsrServiceTest {
     }
 
     @Test
-    fun `should extract coordinates from NSR quay response`() = runTest {
-        val nsrXml = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <Quay xmlns="http://www.netex.org.uk/netex" id="NSR:Quay:102403" version="1">
-                <Name>Bergen</Name>
-                <Centroid>
-                    <Location>
-                        <Longitude>5.328240</Longitude>
-                        <Latitude>60.393604</Latitude>
-                    </Location>
-                </Centroid>
-            </Quay>
-        """.trimIndent()
+    fun `should extract coordinates from NSR quay response`() =
+        runTest {
+            val nsrXml =
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Quay xmlns="http://www.netex.org.uk/netex" id="NSR:Quay:102403" version="1">
+                    <Name>Bergen</Name>
+                    <Centroid>
+                        <Location>
+                            <Longitude>5.328240</Longitude>
+                            <Latitude>60.393604</Latitude>
+                        </Location>
+                    </Centroid>
+                </Quay>
+                """.trimIndent()
 
-        wireMock.stubFor(
-            get(urlPathEqualTo("/quays/NSR%3AQuay%3A102403"))
-                .willReturn(
-                    aResponse()
-                        .withStatus(200)
-                        .withHeader("Content-Type", "application/xml")
-                        .withBody(nsrXml)
-                )
-        )
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3A102403"))
+                    .willReturn(
+                        aResponse()
+                            .withStatus(200)
+                            .withHeader("Content-Type", "application/xml")
+                            .withBody(nsrXml),
+                    ),
+            )
 
-        val coordinate = requireNotNull(nsrService.getQuayCoordinates("NSR:Quay:102403"))
+            val coordinate = requireNotNull(nsrService.getQuayCoordinates("NSR:Quay:102403"))
 
-        assertEquals(BigDecimal("60.393604"), coordinate.latitude)
-        assertEquals(BigDecimal("5.328240"), coordinate.longitude)
+            assertEquals(BigDecimal("60.393604"), coordinate.latitude)
+            assertEquals(BigDecimal("5.328240"), coordinate.longitude)
 
-        wireMock.verify(
-            getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A102403"))
-                .withHeader("ET-Client-Name", equalTo("servicelinker"))
-                .withHeader("ET-Client-ID", equalTo("servicelinker"))
-        )
-    }
-
-    @Test
-    fun `should return null when NSR returns 404`() = runTest {
-        wireMock.stubFor(
-            get(urlPathEqualTo("/quays/NSR%3AQuay%3A999999"))
-                .willReturn(aResponse().withStatus(404))
-        )
-
-        val coordinate = nsrService.getQuayCoordinates("NSR:Quay:999999")
-
-        assertNull(coordinate)
-    }
+            wireMock.verify(
+                getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A102403"))
+                    .withHeader("ET-Client-Name", equalTo("servicelinker"))
+                    .withHeader("ET-Client-ID", equalTo("servicelinker")),
+            )
+        }
 
     @Test
-    fun `should return null when NSR response has no coordinates`() = runTest {
-        val nsrXml = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <Quay xmlns="http://www.netex.org.uk/netex" id="NSR:Quay:100" version="1">
-                <Name>Empty Quay</Name>
-            </Quay>
-        """.trimIndent()
+    fun `should return null when NSR returns 404`() =
+        runTest {
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3A999999"))
+                    .willReturn(aResponse().withStatus(404)),
+            )
 
-        wireMock.stubFor(
-            get(urlPathEqualTo("/quays/NSR%3AQuay%3A100"))
-                .willReturn(
-                    aResponse()
-                        .withStatus(200)
-                        .withHeader("Content-Type", "application/xml")
-                        .withBody(nsrXml)
-                )
-        )
+            val coordinate = nsrService.getQuayCoordinates("NSR:Quay:999999")
 
-        val coordinate = nsrService.getQuayCoordinates("NSR:Quay:100")
-
-        assertNull(coordinate)
-    }
+            assertNull(coordinate)
+        }
 
     @Test
-    fun `should cache coordinates when enabled`() = runTest {
-        val properties = NsrProperties(
-            baseUrl = "http://localhost:$port",
-            timeout = 5000,
-            cacheCoordinates = true
-        )
-        val cachingService = NsrService(properties)
+    fun `should return null when NSR response has no coordinates`() =
+        runTest {
+            val nsrXml =
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Quay xmlns="http://www.netex.org.uk/netex" id="NSR:Quay:100" version="1">
+                    <Name>Empty Quay</Name>
+                </Quay>
+                """.trimIndent()
 
-        val nsrXml = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <Quay xmlns="http://www.netex.org.uk/netex" id="NSR:Quay:102403" version="1">
-                <Centroid>
-                    <Location>
-                        <Longitude>5.328240</Longitude>
-                        <Latitude>60.393604</Latitude>
-                    </Location>
-                </Centroid>
-            </Quay>
-        """.trimIndent()
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3A100"))
+                    .willReturn(
+                        aResponse()
+                            .withStatus(200)
+                            .withHeader("Content-Type", "application/xml")
+                            .withBody(nsrXml),
+                    ),
+            )
 
-        wireMock.stubFor(
-            get(urlPathEqualTo("/quays/NSR%3AQuay%3A102403"))
-                .willReturn(
-                    aResponse()
-                        .withStatus(200)
-                        .withHeader("Content-Type", "application/xml")
-                        .withBody(nsrXml)
-                )
-        )
+            val coordinate = nsrService.getQuayCoordinates("NSR:Quay:100")
 
-        // First call hits the API
-        val first = cachingService.getQuayCoordinates("NSR:Quay:102403")
-        assertNotNull(first)
-
-        // Second call should use cache
-        val second = cachingService.getQuayCoordinates("NSR:Quay:102403")
-        assertNotNull(second)
-        assertEquals(first, second)
-
-        // Should only have made one HTTP request
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A102403")))
-        assertEquals(1L, cachingService.getCacheSize())
-    }
+            assertNull(coordinate)
+        }
 
     @Test
-    fun `should handle connection timeout gracefully`() = runTest {
-        wireMock.stubFor(
-            get(urlPathEqualTo("/quays/NSR%3AQuay%3Atimeout"))
-                .willReturn(
-                    aResponse()
-                        .withStatus(200)
-                        .withFixedDelay(10000)
+    fun `should cache coordinates when enabled`() =
+        runTest {
+            val properties =
+                NsrProperties(
+                    baseUrl = "http://localhost:$port",
+                    timeout = 5000,
+                    cacheCoordinates = true,
                 )
-        )
+            val cachingService = NsrService(properties)
 
-        val properties = NsrProperties(
-            baseUrl = "http://localhost:$port",
-            timeout = 100,
-            cacheCoordinates = false
-        )
-        val timeoutService = NsrService(properties)
+            val nsrXml =
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Quay xmlns="http://www.netex.org.uk/netex" id="NSR:Quay:102403" version="1">
+                    <Centroid>
+                        <Location>
+                            <Longitude>5.328240</Longitude>
+                            <Latitude>60.393604</Latitude>
+                        </Location>
+                    </Centroid>
+                </Quay>
+                """.trimIndent()
 
-        val coordinate = timeoutService.getQuayCoordinates("NSR:Quay:timeout")
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3A102403"))
+                    .willReturn(
+                        aResponse()
+                            .withStatus(200)
+                            .withHeader("Content-Type", "application/xml")
+                            .withBody(nsrXml),
+                    ),
+            )
 
-        assertNull(coordinate)
-    }
+            // First call hits the API
+            val first = cachingService.getQuayCoordinates("NSR:Quay:102403")
+            assertNotNull(first)
+
+            // Second call should use cache
+            val second = cachingService.getQuayCoordinates("NSR:Quay:102403")
+            assertNotNull(second)
+            assertEquals(first, second)
+
+            // Should only have made one HTTP request
+            wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A102403")))
+            assertEquals(1L, cachingService.getCacheSize())
+        }
+
+    @Test
+    fun `should handle connection timeout gracefully`() =
+        runTest {
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3Atimeout"))
+                    .willReturn(
+                        aResponse()
+                            .withStatus(200)
+                            .withFixedDelay(10000),
+                    ),
+            )
+
+            val properties =
+                NsrProperties(
+                    baseUrl = "http://localhost:$port",
+                    timeout = 100,
+                    cacheCoordinates = false,
+                )
+            val timeoutService = NsrService(properties)
+
+            val coordinate = timeoutService.getQuayCoordinates("NSR:Quay:timeout")
+
+            assertNull(coordinate)
+        }
 }

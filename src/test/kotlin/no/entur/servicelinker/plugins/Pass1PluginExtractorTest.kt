@@ -12,7 +12,6 @@ import kotlin.test.assertTrue
  * coverage was retired when the DOM path was deleted.
  */
 class Pass1PluginExtractorTest {
-
     private val extractor = Pass1PluginExtractor()
 
     // --- StopPlace + Centroid guard --------------------------------------------------
@@ -40,7 +39,7 @@ class Pass1PluginExtractorTest {
         val doc = extractor.extract("t.xml", readResource("sample-netex-stopplace.xml"))
         assertTrue(
             doc.stopPoints.none { it.id == "TST:StopPlace:3" },
-            "SP3 has <Location> outside of <Centroid> and must not be emitted"
+            "SP3 has <Location> outside of <Centroid> and must not be emitted",
         )
     }
 
@@ -72,7 +71,7 @@ class Pass1PluginExtractorTest {
         // If this regresses, resolveJpModeMap is silently picking up RAIL from the Route path.
         assertNull(
             doc.jpModeMap["TST:JourneyPattern:lineModelessWithRouteFallback"],
-            "LineRef wins even when the referenced Line has no mode"
+            "LineRef wins even when the referenced Line has no mode",
         )
     }
 
@@ -110,7 +109,8 @@ class Pass1PluginExtractorTest {
 
     @Test
     fun `PSA without order attribute does not NPE`() {
-        val xml = """
+        val xml =
+            """
             <?xml version="1.0" encoding="UTF-8"?>
             <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
                 <dataObjects>
@@ -124,7 +124,7 @@ class Pass1PluginExtractorTest {
                     </ServiceFrame>
                 </dataObjects>
             </PublicationDelivery>
-        """.trimIndent().toByteArray(Charsets.UTF_8)
+            """.trimIndent().toByteArray(Charsets.UTF_8)
         val doc = extractor.extract("t.xml", xml)
         assertEquals("NSR:Quay:1", doc.assignments["TST:SSP:1"])
     }

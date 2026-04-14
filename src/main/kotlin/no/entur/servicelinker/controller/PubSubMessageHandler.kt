@@ -22,7 +22,7 @@ class PubSubMessageHandler(
     private val serviceLinkProducerService: ServiceLinkProducerService,
     private val pubSubTemplate: PubSubTemplate,
     @Value("\${servicelinker.pubsub.outbound.topic}") private val outboundTopic: String,
-    @Value("\${gcs.bucket.input}") private val inputBucket: String
+    @Value("\${gcs.bucket.input}") private val inputBucket: String,
 ) {
     private val logger = LoggerFactory.getLogger(PubSubMessageHandler::class.java)
 
@@ -33,16 +33,18 @@ class PubSubMessageHandler(
 
         val correlationId = attributes[CORRELATION_ID] ?: "unknown"
         val datasetReferential = attributes[DATASET_REFERENTIAL] ?: "unknown"
-        val modesFilter: Set<String>? = attributes[SERVICE_LINK_MODES_HEADER]?.let { value ->
-            if (value.isBlank()) emptySet() else value.split(",").map { it.trim().uppercase() }.toSet()
-        }
+        val modesFilter: Set<String>? =
+            attributes[SERVICE_LINK_MODES_HEADER]?.let { value ->
+                if (value.isBlank()) emptySet() else value.split(",").map { it.trim().uppercase() }.toSet()
+            }
 
         MDC.put("correlationId", correlationId)
         MDC.put("codespace", datasetReferential)
         MDC.put("stage", "incoming")
         try {
-            val targetFileHandle = attributes[TARGET_FILE_HANDLE]
-                ?: throw IllegalArgumentException("Message missing 'RutebankenTargetFileHandle' attribute")
+            val targetFileHandle =
+                attributes[TARGET_FILE_HANDLE]
+                    ?: throw IllegalArgumentException("Message missing 'RutebankenTargetFileHandle' attribute")
 
             logger.info("Received PubSub message: file={}, modesFilter={}", targetFileHandle, modesFilter)
             val startTime = System.currentTimeMillis()
@@ -51,7 +53,7 @@ class PubSubMessageHandler(
             pubSubTemplate.publish(
                 outboundTopic,
                 "",
-                attributes.toMap() + mapOf(LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_STARTED)
+                attributes.toMap() + mapOf(LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_STARTED),
             )
             logger.info("Published STARTED status")
 
@@ -60,16 +62,21 @@ class PubSubMessageHandler(
 
             val elapsedSec = (System.currentTimeMillis() - startTime) / 1000.0
             MDC.put("stage", "outgoing/success")
-            logger.info("Processing complete in {}s, added {} ServiceLinks. Publishing SUCCESS status.", String.format("%.1f", elapsedSec), addedCount)
+            logger.info(
+                "Processing complete in {}s, added {} ServiceLinks. Publishing SUCCESS status.",
+                String.format("%.1f", elapsedSec),
+                addedCount,
+            )
 
             pubSubTemplate.publish(
                 outboundTopic,
                 "",
-                attributes.toMap() + mapOf(
-                    LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_SUCCEEDED,
-                    LINKED_NETEX_FILE_PATH_HEADER to targetFileHandle,
-                    "addedServiceLinksCount" to addedCount.toString()
-                )
+                attributes.toMap() +
+                    mapOf(
+                        LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_SUCCEEDED,
+                        LINKED_NETEX_FILE_PATH_HEADER to targetFileHandle,
+                        "addedServiceLinksCount" to addedCount.toString(),
+                    ),
             )
             logger.info("Published SUCCESS status")
 
@@ -82,10 +89,11 @@ class PubSubMessageHandler(
                 pubSubTemplate.publish(
                     outboundTopic,
                     "",
-                    attributes.toMap() + mapOf(
-                        LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_FAILED,
-                        LINKING_ERROR_CODE_HEADER to (e.message ?: "Unknown error")
-                    )
+                    attributes.toMap() +
+                        mapOf(
+                            LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_FAILED,
+                            LINKING_ERROR_CODE_HEADER to (e.message ?: "Unknown error"),
+                        ),
                 )
                 logger.info("Published FAILED status")
             } catch (publishEx: Throwable) {
@@ -98,28 +106,36 @@ class PubSubMessageHandler(
         }
     }
 
-    private fun processWithRetry(bucketName: String, objectName: String, modesFilter: Set<String>?): Int {
+    private fun processWithRetry(
+        bucketName: String,
+        objectName: String,
+        modesFilter: Set<String>?,
+    ): Int {
         var lastException: Exception? = null
         repeat(MAX_RETRIES) { attempt ->
             logger.info("Starting processing attempt ${attempt + 1}/$MAX_RETRIES for gs://$bucketName/$objectName")
             val executor = Executors.newSingleThreadExecutor()
             try {
                 val mdcSnapshot = MDC.getCopyOfContextMap() ?: emptyMap()
-                val future = executor.submit(Callable {
-                    MDC.setContextMap(mdcSnapshot)
-                    try {
-                        runBlocking(MDCContext()) {
-                            serviceLinkProducerService.processDataset(bucketName, objectName, modesFilter)
-                        }
-                    } finally {
-                        MDC.clear()
-                    }
-                })
+                val future =
+                    executor.submit(
+                        Callable {
+                            MDC.setContextMap(mdcSnapshot)
+                            try {
+                                runBlocking(MDCContext()) {
+                                    serviceLinkProducerService.processDataset(bucketName, objectName, modesFilter)
+                                }
+                            } finally {
+                                MDC.clear()
+                            }
+                        },
+                    )
                 return future.get(PROCESSING_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             } catch (e: TimeoutException) {
                 // Don't retry timeouts — the same input will almost certainly time out again
                 throw RuntimeException(
-                    "Processing timed out after ${PROCESSING_TIMEOUT_MS / 1000}s for gs://$bucketName/$objectName", e
+                    "Processing timed out after ${PROCESSING_TIMEOUT_MS / 1000}s for gs://$bucketName/$objectName",
+                    e,
                 )
             } catch (e: Exception) {
                 lastException = e
@@ -150,6 +166,5 @@ class PubSubMessageHandler(
         const val CORRELATION_ID: String = "RutebankenCorrelationId"
         const val DATASET_REFERENTIAL: String = "EnturDatasetReferential"
         const val TARGET_FILE_HANDLE: String = "RutebankenTargetFileHandle"
-
     }
 }

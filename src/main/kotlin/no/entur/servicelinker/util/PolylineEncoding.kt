@@ -7,7 +7,6 @@ import java.lang.Character.toChars
  * See https://developers.google.com/maps/documentation/utilities/polylinealgorithm for details
  */
 object PolylineEncoding {
-
     fun decode(encodedPath: String): List<Coordinate> {
         val len = encodedPath.length
 
@@ -64,7 +63,10 @@ object PolylineEncoding {
         return result.toString()
     }
 
-    private fun encode(v: Long, result: StringBuilder) {
+    private fun encode(
+        v: Long,
+        result: StringBuilder,
+    ) {
         var v = v
         v = if (v < 0) (v shl 1).inv() else v shl 1
         while (v >= 0x20) {

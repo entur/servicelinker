@@ -12,7 +12,9 @@ internal const val GML_PREFIX = "gis"
  * section, so handlers never fire unnecessarily — "nothing to inject"
  * and "already injected" are the same state.
  */
-class InjectionContext(val plan: InjectionPlan) {
+class InjectionContext(
+    val plan: InjectionPlan,
+) {
     var stopsInjected = plan.stubScheduledStopPoints.isEmpty()
     var linksInjected = plan.newServiceLinks.isEmpty()
     var currentJpId: String? = null

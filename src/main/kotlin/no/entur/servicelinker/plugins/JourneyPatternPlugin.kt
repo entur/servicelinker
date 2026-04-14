@@ -12,7 +12,6 @@ import org.xml.sax.Attributes
  * that `buildJpModeMap` resolves using the Line/Route maps supplied by [LineRoutePlugin].
  */
 internal class JourneyPatternPlugin : AbstractNetexPlugin() {
-
     data class JpModeInputs(
         val directMode: TransportMode?,
         val lineRef: String?,
@@ -53,32 +52,46 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
     private var modeText: StringBuilder? = null
 
     override fun getName() = "JourneyPatternPlugin"
-    override fun getDescription() = "Collects JP stop sequences, existing SLIJPs, and mode inputs"
-    override fun getSupportedElementTypes(): Set<String> = setOf(
-        "JourneyPattern",
-        "JourneyPattern/StopPointInJourneyPattern",
-        "JourneyPattern/ScheduledStopPointRef",
-        "JourneyPattern/ServiceLinkInJourneyPattern",
-        "JourneyPattern/ServiceLinkRef",
-        "JourneyPattern/LineRef",
-        "JourneyPattern/RouteRef",
-        "JourneyPattern/TransportMode",
-        "JourneyPattern/VehicleMode",
-        "JourneyPattern/VehicleModes",
-    )
 
-    override fun startElement(elementName: String, attributes: Attributes?, currentEntity: Entity?) {
+    override fun getDescription() = "Collects JP stop sequences, existing SLIJPs, and mode inputs"
+
+    override fun getSupportedElementTypes(): Set<String> =
+        setOf(
+            "JourneyPattern",
+            "JourneyPattern/StopPointInJourneyPattern",
+            "JourneyPattern/ScheduledStopPointRef",
+            "JourneyPattern/ServiceLinkInJourneyPattern",
+            "JourneyPattern/ServiceLinkRef",
+            "JourneyPattern/LineRef",
+            "JourneyPattern/RouteRef",
+            "JourneyPattern/TransportMode",
+            "JourneyPattern/VehicleMode",
+            "JourneyPattern/VehicleModes",
+        )
+
+    override fun startElement(
+        elementName: String,
+        attributes: Attributes?,
+        currentEntity: Entity?,
+    ) {
         when (elementName) {
-            "JourneyPattern" -> resetJp(attributes)
+            "JourneyPattern" -> {
+                resetJp(attributes)
+            }
+
             "StopPointInJourneyPattern" -> {
                 inSpijp = true
                 spijpOrderFallback += 1
                 spijpOrder = attributes?.getValue("order")?.toIntOrNull() ?: spijpOrderFallback
                 spijpRef = null
             }
-            "ScheduledStopPointRef" -> if (inSpijp && spijpRef == null) {
-                spijpRef = attributes?.getValue("ref")
+
+            "ScheduledStopPointRef" -> {
+                if (inSpijp && spijpRef == null) {
+                    spijpRef = attributes?.getValue("ref")
+                }
             }
+
             "ServiceLinkInJourneyPattern" -> {
                 inSlijp = true
                 slijpId = attributes?.getValue("id")
@@ -86,39 +99,62 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
                 slijpServiceLinkRef = null
                 slijpServiceLinkRefVersion = null
             }
-            "ServiceLinkRef" -> if (inSlijp && slijpServiceLinkRef == null) {
-                slijpServiceLinkRef = attributes?.getValue("ref")
-                slijpServiceLinkRefVersion = attributes?.getValue("version")?.takeIf { it.isNotBlank() }
+
+            "ServiceLinkRef" -> {
+                if (inSlijp && slijpServiceLinkRef == null) {
+                    slijpServiceLinkRef = attributes?.getValue("ref")
+                    slijpServiceLinkRefVersion = attributes?.getValue("version")?.takeIf { it.isNotBlank() }
+                }
             }
-            "LineRef" -> if (jpLineRef == null) jpLineRef = attributes?.getValue("ref")
-            "RouteRef" -> if (jpRouteRef == null) jpRouteRef = attributes?.getValue("ref")
-            "TransportMode", "VehicleMode", "VehicleModes" -> if (jpDirectMode == null) modeText = StringBuilder()
+
+            "LineRef" -> {
+                if (jpLineRef == null) jpLineRef = attributes?.getValue("ref")
+            }
+
+            "RouteRef" -> {
+                if (jpRouteRef == null) jpRouteRef = attributes?.getValue("ref")
+            }
+
+            "TransportMode", "VehicleMode", "VehicleModes" -> {
+                if (jpDirectMode == null) modeText = StringBuilder()
+            }
         }
     }
 
-    override fun characters(elementName: String, ch: CharArray?, start: Int, length: Int) {
+    override fun characters(
+        elementName: String,
+        ch: CharArray?,
+        start: Int,
+        length: Int,
+    ) {
         if (ch != null) modeText?.append(ch, start, length)
     }
 
-    override fun endElement(elementName: String, currentEntity: Entity?) {
+    override fun endElement(
+        elementName: String,
+        currentEntity: Entity?,
+    ) {
         when (elementName) {
             "TransportMode", "VehicleMode", "VehicleModes" -> {
                 if (jpDirectMode == null) jpDirectMode = parseTransportMode(modeText?.toString()?.trim())
                 modeText = null
             }
+
             "StopPointInJourneyPattern" -> {
                 spijpRef?.let { orderedRefs.add(spijpOrder to it) }
                 inSpijp = false
                 spijpRef = null
             }
+
             "ServiceLinkInJourneyPattern" -> {
                 val ref = slijpServiceLinkRef
                 if (ref != null) {
-                    slijpEntries[ref] = ExistingSlijpInfo(
-                        id = slijpId ?: "",
-                        version = slijpVersion?.ifBlank { null } ?: "1",
-                        serviceLinkRefVersion = slijpServiceLinkRefVersion,
-                    )
+                    slijpEntries[ref] =
+                        ExistingSlijpInfo(
+                            id = slijpId ?: "",
+                            version = slijpVersion?.ifBlank { null } ?: "1",
+                            serviceLinkRefVersion = slijpServiceLinkRefVersion,
+                        )
                 }
                 inSlijp = false
                 slijpId = null
@@ -126,6 +162,7 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
                 slijpServiceLinkRef = null
                 slijpServiceLinkRefVersion = null
             }
+
             "JourneyPattern" -> {
                 val id = jpId
                 if (id != null) {
@@ -161,8 +198,10 @@ internal class JourneyPatternPlugin : AbstractNetexPlugin() {
         spijpRef = null
         inSpijp = false
         inSlijp = false
-        slijpId = null; slijpVersion = null
-        slijpServiceLinkRef = null; slijpServiceLinkRefVersion = null
+        slijpId = null
+        slijpVersion = null
+        slijpServiceLinkRef = null
+        slijpServiceLinkRefVersion = null
         modeText = null
     }
 }

@@ -23,35 +23,38 @@ data class NsrProperties(
     val timeout: Long = 10000,
     val cacheCoordinates: Boolean = true,
     val cacheMaxSize: Int = 50_000,
-    val cacheTtlHours: Int = 24
+    val cacheTtlHours: Int = 24,
 )
 
 @Service
 class NsrService(
-    private val nsrProperties: NsrProperties
+    private val nsrProperties: NsrProperties,
 ) {
     private val logger = LoggerFactory.getLogger(NsrService::class.java)
 
     // LRU cache: ~300 bytes per entry, 50k entries ≈ 15 MB; entries expire after 24h
-    private val coordinateCache: Cache<String, Coordinate> = Caffeine.newBuilder()
-        .maximumSize(nsrProperties.cacheMaxSize.toLong())
-        .expireAfterWrite(nsrProperties.cacheTtlHours.toLong(), TimeUnit.HOURS)
-        .build()
+    private val coordinateCache: Cache<String, Coordinate> =
+        Caffeine
+            .newBuilder()
+            .maximumSize(nsrProperties.cacheMaxSize.toLong())
+            .expireAfterWrite(nsrProperties.cacheTtlHours.toLong(), TimeUnit.HOURS)
+            .build()
 
     private val webClient: WebClient by lazy {
-        WebClient.builder()
+        WebClient
+            .builder()
             .baseUrl(nsrProperties.baseUrl)
             .defaultHeader("ET-Client-Name", "servicelinker")
             .defaultHeader("ET-Client-ID", "servicelinker")
             .defaultHeader("Accept", "application/xml")
             .clientConnector(
                 ReactorClientHttpConnector(
-                    HttpClient.create()
+                    HttpClient
+                        .create()
                         .followRedirect(true)
-                        .responseTimeout(Duration.ofMillis(nsrProperties.timeout))
-                )
-            )
-            .build()
+                        .responseTimeout(Duration.ofMillis(nsrProperties.timeout)),
+                ),
+            ).build()
     }
 
     suspend fun getQuayCoordinates(quayId: String): Coordinate? {
@@ -65,10 +68,12 @@ class NsrService(
         return try {
             logger.debug("Looking up coordinates for quay {} from NSR", quayId)
 
-            val responseBody = webClient.get()
-                .uri("/quays/{quayId}", quayId)
-                .retrieve()
-                .awaitBody<String>()
+            val responseBody =
+                webClient
+                    .get()
+                    .uri("/quays/{quayId}", quayId)
+                    .retrieve()
+                    .awaitBody<String>()
 
             val coordinate = parseCoordinateFromXml(responseBody)
 
@@ -107,11 +112,16 @@ class NsrService(
         }
     }
 
-    private fun getElementText(parent: Element, tagName: String): String? {
+    private fun getElementText(
+        parent: Element,
+        tagName: String,
+    ): String? {
         val elements = parent.getElementsByTagName(tagName)
         return if (elements.length > 0) {
             elements.item(0).textContent?.trim()
-        } else null
+        } else {
+            null
+        }
     }
 
     fun getCacheSize(): Long = coordinateCache.estimatedSize()

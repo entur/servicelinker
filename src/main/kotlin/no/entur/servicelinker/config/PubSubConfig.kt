@@ -13,7 +13,6 @@ import org.springframework.messaging.MessageChannel
 @Configuration
 @EnableIntegration
 class PubSubConfig {
-
     @Bean
     fun servicelinkerInputChannel(): MessageChannel = DirectChannel()
 
@@ -21,7 +20,7 @@ class PubSubConfig {
     fun inboundChannelAdapter(
         servicelinkerInputChannel: MessageChannel,
         pubSubTemplate: PubSubTemplate,
-        @Value("\${servicelinker.pubsub.inbound.subscription}") subscription: String
+        @Value("\${servicelinker.pubsub.inbound.subscription}") subscription: String,
     ): PubSubInboundChannelAdapter {
         val adapter = PubSubInboundChannelAdapter(pubSubTemplate, subscription)
         adapter.setOutputChannel(servicelinkerInputChannel)

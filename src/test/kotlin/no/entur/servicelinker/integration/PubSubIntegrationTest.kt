@@ -25,7 +25,6 @@ import java.util.concurrent.TimeUnit
 
 @Testcontainers
 class PubSubIntegrationTest {
-
     companion object {
         private const val PROJECT_ID = "test-project"
         private const val INBOUND_TOPIC = "ServicelinkerInboundQueue"
@@ -35,10 +34,12 @@ class PubSubIntegrationTest {
 
         @Container
         @JvmStatic
-        val pubsubEmulator: PubSubEmulatorContainer = PubSubEmulatorContainer(
-            DockerImageName.parse("gcr.io/google.com/cloudsdktool/google-cloud-cli:latest")
-                .asCompatibleSubstituteFor("gcr.io/google.com/cloudsdktool/cloud-sdk")
-        )
+        val pubsubEmulator: PubSubEmulatorContainer =
+            PubSubEmulatorContainer(
+                DockerImageName
+                    .parse("gcr.io/google.com/cloudsdktool/google-cloud-cli:latest")
+                    .asCompatibleSubstituteFor("gcr.io/google.com/cloudsdktool/cloud-sdk"),
+            )
     }
 
     private fun createChannelProvider(): FixedTransportChannelProvider {
@@ -52,12 +53,14 @@ class PubSubIntegrationTest {
         val credentialsProvider = NoCredentialsProvider.create()
 
         // Create topics
-        val topicAdminClient = TopicAdminClient.create(
-            TopicAdminSettings.newBuilder()
-                .setTransportChannelProvider(channelProvider)
-                .setCredentialsProvider(credentialsProvider)
-                .build()
-        )
+        val topicAdminClient =
+            TopicAdminClient.create(
+                TopicAdminSettings
+                    .newBuilder()
+                    .setTransportChannelProvider(channelProvider)
+                    .setCredentialsProvider(credentialsProvider)
+                    .build(),
+            )
 
         val inboundTopicName = TopicName.of(PROJECT_ID, INBOUND_TOPIC)
         val outboundTopicName = TopicName.of(PROJECT_ID, OUTBOUND_TOPIC)
@@ -69,12 +72,14 @@ class PubSubIntegrationTest {
         assertEquals(outboundTopicName.toString(), createdOutbound.name)
 
         // Create subscriptions
-        val subAdminClient = SubscriptionAdminClient.create(
-            SubscriptionAdminSettings.newBuilder()
-                .setTransportChannelProvider(channelProvider)
-                .setCredentialsProvider(credentialsProvider)
-                .build()
-        )
+        val subAdminClient =
+            SubscriptionAdminClient.create(
+                SubscriptionAdminSettings
+                    .newBuilder()
+                    .setTransportChannelProvider(channelProvider)
+                    .setCredentialsProvider(credentialsProvider)
+                    .build(),
+            )
 
         val inboundSubName = ProjectSubscriptionName.of(PROJECT_ID, INBOUND_SUB)
         val outboundSubName = ProjectSubscriptionName.of(PROJECT_ID, OUTBOUND_SUB)
@@ -83,28 +88,32 @@ class PubSubIntegrationTest {
             inboundSubName.toString(),
             inboundTopicName.toString(),
             PushConfig.getDefaultInstance(),
-            10
+            10,
         )
 
         subAdminClient.createSubscription(
             outboundSubName.toString(),
             outboundTopicName.toString(),
             PushConfig.getDefaultInstance(),
-            10
+            10,
         )
 
         // Publish a test message to inbound topic with expected attributes
-        val publisher = Publisher.newBuilder(inboundTopicName)
-            .setChannelProvider(channelProvider)
-            .setCredentialsProvider(credentialsProvider)
-            .build()
+        val publisher =
+            Publisher
+                .newBuilder(inboundTopicName)
+                .setChannelProvider(channelProvider)
+                .setCredentialsProvider(credentialsProvider)
+                .build()
 
-        val message = PubsubMessage.newBuilder()
-            .setData(ByteString.copyFromUtf8("test"))
-            .putAttributes("RutebankenTargetFileHandle", "test-file.xml")
-            .putAttributes("RutebankenCorrelationId", "test-correlation-123")
-            .putAttributes("EnturDatasetReferential", "rb_test")
-            .build()
+        val message =
+            PubsubMessage
+                .newBuilder()
+                .setData(ByteString.copyFromUtf8("test"))
+                .putAttributes("RutebankenTargetFileHandle", "test-file.xml")
+                .putAttributes("RutebankenCorrelationId", "test-correlation-123")
+                .putAttributes("EnturDatasetReferential", "rb_test")
+                .build()
 
         val messageId = publisher.publish(message).get(5, TimeUnit.SECONDS)
         assertTrue(messageId.isNotEmpty(), "Should receive a message ID")

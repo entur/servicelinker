@@ -26,7 +26,6 @@ import java.math.BigDecimal
  *     `getElementsByTagName("Centroid").item(0)` — first-in-document-order wins.
  */
 internal class StopPointPlugin : AbstractNetexPlugin() {
-
     private val _stopPoints = mutableMapOf<String, List<StopPoint>>()
     private val _stopIds = mutableMapOf<String, Map<String, String>>()
 
@@ -37,6 +36,7 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
     private var docIds: MutableMap<String, String> = mutableMapOf()
 
     private enum class Container { SSP, STOP_PLACE }
+
     private var container: Container? = null
 
     private var id: String? = null
@@ -54,33 +54,42 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
 
     // Character buffer for the currently-open leaf element, if any.
     private var text: StringBuilder? = null
+
     private enum class Target { NAME, SHORT_NAME, LONGITUDE, LATITUDE, MODE }
+
     private var target: Target? = null
 
     override fun getName() = "StopPointPlugin"
-    override fun getDescription() = "Collects ScheduledStopPoint + StopPlace metadata"
-    override fun getSupportedElementTypes(): Set<String> = setOf(
-        "ScheduledStopPoint",
-        "StopPlace",
-        "ScheduledStopPoint/Name",
-        "ScheduledStopPoint/ShortName",
-        "ScheduledStopPoint/Location",
-        "ScheduledStopPoint/Longitude",
-        "ScheduledStopPoint/Latitude",
-        "ScheduledStopPoint/TransportMode",
-        "ScheduledStopPoint/VehicleMode",
-        "ScheduledStopPoint/VehicleModes",
-        "StopPlace/Name",
-        "StopPlace/Centroid",
-        "StopPlace/Location",
-        "StopPlace/Longitude",
-        "StopPlace/Latitude",
-        "StopPlace/TransportMode",
-        "StopPlace/VehicleMode",
-        "StopPlace/VehicleModes",
-    )
 
-    override fun startElement(elementName: String, attributes: Attributes?, currentEntity: Entity?) {
+    override fun getDescription() = "Collects ScheduledStopPoint + StopPlace metadata"
+
+    override fun getSupportedElementTypes(): Set<String> =
+        setOf(
+            "ScheduledStopPoint",
+            "StopPlace",
+            "ScheduledStopPoint/Name",
+            "ScheduledStopPoint/ShortName",
+            "ScheduledStopPoint/Location",
+            "ScheduledStopPoint/Longitude",
+            "ScheduledStopPoint/Latitude",
+            "ScheduledStopPoint/TransportMode",
+            "ScheduledStopPoint/VehicleMode",
+            "ScheduledStopPoint/VehicleModes",
+            "StopPlace/Name",
+            "StopPlace/Centroid",
+            "StopPlace/Location",
+            "StopPlace/Longitude",
+            "StopPlace/Latitude",
+            "StopPlace/TransportMode",
+            "StopPlace/VehicleMode",
+            "StopPlace/VehicleModes",
+        )
+
+    override fun startElement(
+        elementName: String,
+        attributes: Attributes?,
+        currentEntity: Entity?,
+    ) {
         when (elementName) {
             "ScheduledStopPoint" -> {
                 resetCurrent()
@@ -89,31 +98,67 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
                 version = attributes?.getValue("version")
                 id?.takeIf { it.isNotBlank() }?.let { docIds[it] = version?.ifBlank { null } ?: "1" }
             }
+
             "StopPlace" -> {
                 resetCurrent()
                 container = Container.STOP_PLACE
                 id = attributes?.getValue("id")
                 version = attributes?.getValue("version")
             }
-            "Centroid" -> if (container == Container.STOP_PLACE) insideCentroid = true
-            "Location" -> when (container) {
-                Container.SSP -> insideLocation = true
-                Container.STOP_PLACE -> if (insideCentroid) insideLocation = true
-                null -> {}
+
+            "Centroid" -> {
+                if (container == Container.STOP_PLACE) insideCentroid = true
             }
-            "Name" -> startText(Target.NAME)
-            "ShortName" -> startText(Target.SHORT_NAME)
-            "Longitude" -> if (insideLocation) startText(Target.LONGITUDE)
-            "Latitude" -> if (insideLocation) startText(Target.LATITUDE)
-            "TransportMode", "VehicleMode", "VehicleModes" -> startText(Target.MODE)
+
+            "Location" -> {
+                when (container) {
+                    Container.SSP -> {
+                        insideLocation = true
+                    }
+
+                    Container.STOP_PLACE -> {
+                        if (insideCentroid) insideLocation = true
+                    }
+
+                    null -> {}
+                }
+            }
+
+            "Name" -> {
+                startText(Target.NAME)
+            }
+
+            "ShortName" -> {
+                startText(Target.SHORT_NAME)
+            }
+
+            "Longitude" -> {
+                if (insideLocation) startText(Target.LONGITUDE)
+            }
+
+            "Latitude" -> {
+                if (insideLocation) startText(Target.LATITUDE)
+            }
+
+            "TransportMode", "VehicleMode", "VehicleModes" -> {
+                startText(Target.MODE)
+            }
         }
     }
 
-    override fun characters(elementName: String, ch: CharArray?, start: Int, length: Int) {
+    override fun characters(
+        elementName: String,
+        ch: CharArray?,
+        start: Int,
+        length: Int,
+    ) {
         if (ch != null) text?.append(ch, start, length)
     }
 
-    override fun endElement(elementName: String, currentEntity: Entity?) {
+    override fun endElement(
+        elementName: String,
+        currentEntity: Entity?,
+    ) {
         when (elementName) {
             "ScheduledStopPoint", "StopPlace" -> {
                 emitIfComplete()
@@ -121,24 +166,35 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
                 insideCentroid = false
                 insideLocation = false
             }
-            "Centroid" -> if (container == Container.STOP_PLACE) insideCentroid = false
-            "Location" -> insideLocation = false
+
+            "Centroid" -> {
+                if (container == Container.STOP_PLACE) insideCentroid = false
+            }
+
+            "Location" -> {
+                insideLocation = false
+            }
+
             "Name" -> {
                 if (target == Target.NAME && name == null) name = text?.toString()?.trim()
                 clearText()
             }
+
             "ShortName" -> {
                 if (target == Target.SHORT_NAME && shortName == null) shortName = text?.toString()?.trim()
                 clearText()
             }
+
             "Longitude" -> {
                 if (target == Target.LONGITUDE && lon == null) lon = text?.toString()?.trim()?.toBigDecimalOrNull()
                 clearText()
             }
+
             "Latitude" -> {
                 if (target == Target.LATITUDE && lat == null) lat = text?.toString()?.trim()?.toBigDecimalOrNull()
                 clearText()
             }
+
             "TransportMode", "VehicleMode", "VehicleModes" -> {
                 if (target == Target.MODE && mode == null) mode = parseTransportMode(text?.toString()?.trim())
                 clearText()
@@ -166,23 +222,33 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
 
     private fun resetCurrent() {
         container = null
-        id = null; version = null
-        name = null; shortName = null
-        lon = null; lat = null; mode = null
+        id = null
+        version = null
+        name = null
+        shortName = null
+        lon = null
+        lat = null
+        mode = null
         insideCentroid = false
         insideLocation = false
-        text = null; target = null
+        text = null
+        target = null
     }
 
     private fun emitIfComplete() {
         val theId = id ?: return
         val theLat = lat ?: return
         val theLon = lon ?: return
-        val theName = when (container) {
-            Container.SSP -> name ?: shortName // DOM parseStopPoint falls back to ShortName
-            Container.STOP_PLACE -> name       // DOM parseStopPlace does not
-            null -> return
-        }
+        val theName =
+            when (container) {
+                Container.SSP -> name ?: shortName
+
+                // DOM parseStopPoint falls back to ShortName
+                Container.STOP_PLACE -> name
+
+                // DOM parseStopPlace does not
+                null -> return
+            }
         docStops.add(
             StopPoint(
                 id = theId,
@@ -190,7 +256,7 @@ internal class StopPointPlugin : AbstractNetexPlugin() {
                 coordinate = Coordinate(theLat, theLon),
                 transportMode = mode,
                 version = version,
-            )
+            ),
         )
     }
 }

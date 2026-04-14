@@ -10,7 +10,12 @@ import no.entur.servicelinker.model.TransportMode
  * or journey pattern.
  */
 internal fun parseTransportMode(raw: String?): TransportMode? {
-    val first = raw?.trim()?.takeIf { it.isNotEmpty() }?.split(Regex("\\s+"))?.firstOrNull()
+    val first =
+        raw
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.split(Regex("\\s+"))
+            ?.firstOrNull()
     return when (first?.uppercase()) {
         null, "" -> null
         "BUS" -> TransportMode.BUS

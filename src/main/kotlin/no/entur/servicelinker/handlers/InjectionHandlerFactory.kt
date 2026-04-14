@@ -15,24 +15,36 @@ import org.xml.sax.helpers.AttributesImpl
  * structure will fire.
  */
 object InjectionHandlerFactory {
-
     /** Known ServiceFrame ancestor patterns in NeTEx files. */
-    private val SERVICE_FRAME_PREFIXES = listOf(
-        "/PublicationDelivery/dataObjects/CompositeFrame/frames/ServiceFrame",
-        "/PublicationDelivery/dataObjects/ServiceFrame",
-    )
+    private val SERVICE_FRAME_PREFIXES =
+        listOf(
+            "/PublicationDelivery/dataObjects/CompositeFrame/frames/ServiceFrame",
+            "/PublicationDelivery/dataObjects/ServiceFrame",
+        )
 
     // NeTEx ServiceFrame children that appear after both scheduledStopPoints and
     // serviceLinks in schema order. An InsertBeforeHandler on each ensures new
     // sections are emitted at the correct position.
-    private val ELEMENTS_AFTER_INJECTION_POINTS = listOf(
-        "journeyPatterns", "stopAssignments", "connections",
-        "timingPoints", "timingLinks", "tariffZones",
-        "routingConstraintZones", "transferRestrictions", "serviceExclusions",
-        "timeDemandTypes", "timeDemandTypeAssignments", "timingLinkGroups",
-        "notices", "noticeAssignments", "logicalDisplays",
-        "displayAssignments", "passengerInformationEquipments",
-    )
+    private val ELEMENTS_AFTER_INJECTION_POINTS =
+        listOf(
+            "journeyPatterns",
+            "stopAssignments",
+            "connections",
+            "timingPoints",
+            "timingLinks",
+            "tariffZones",
+            "routingConstraintZones",
+            "transferRestrictions",
+            "serviceExclusions",
+            "timeDemandTypes",
+            "timeDemandTypeAssignments",
+            "timingLinkGroups",
+            "notices",
+            "noticeAssignments",
+            "logicalDisplays",
+            "displayAssignments",
+            "passengerInformationEquipments",
+        )
 
     fun buildHandlerMap(plan: InjectionPlan): Map<String, XMLElementHandler> {
         val ctx = InjectionContext(plan)
@@ -67,12 +79,23 @@ object InjectionHandlerFactory {
  * declaration (the non-namespace-aware parser passes these as regular attrs).
  */
 private class GmlNamespaceHandler : PassThroughHandler() {
-    override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes?, writer: DelegatingXMLElementWriter) {
+    override fun startElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        attributes: Attributes?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         writer.startPrefixMapping(GML_PREFIX, GML_NS)
         writer.startElement(uri, localName, qName, stripGmlNamespaceAttr(attributes))
     }
 
-    override fun endElement(uri: String?, localName: String?, qName: String?, writer: DelegatingXMLElementWriter) {
+    override fun endElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         writer.endElement(uri, localName, qName)
         writer.endPrefixMapping(GML_PREFIX)
     }
@@ -88,8 +111,11 @@ private class GmlNamespaceHandler : PassThroughHandler() {
                 continue
             }
             filtered.addAttribute(
-                attributes.getURI(i), attributes.getLocalName(i),
-                attributes.getQName(i), attributes.getType(i), attributes.getValue(i),
+                attributes.getURI(i),
+                attributes.getLocalName(i),
+                attributes.getQName(i),
+                attributes.getType(i),
+                attributes.getValue(i),
             )
         }
         return if (removedAny) filtered else attributes
@@ -98,22 +124,45 @@ private class GmlNamespaceHandler : PassThroughHandler() {
 
 /** Pass-through base: forwards all events unchanged. Override the method that injects. */
 private open class PassThroughHandler : XMLElementHandler {
-    override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes?, writer: DelegatingXMLElementWriter) {
+    override fun startElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        attributes: Attributes?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         writer.startElement(uri, localName, qName, attributes)
     }
 
-    override fun characters(ch: CharArray?, start: Int, length: Int, writer: DelegatingXMLElementWriter) {
+    override fun characters(
+        ch: CharArray?,
+        start: Int,
+        length: Int,
+        writer: DelegatingXMLElementWriter,
+    ) {
         writer.characters(ch, start, length)
     }
 
-    override fun endElement(uri: String?, localName: String?, qName: String?, writer: DelegatingXMLElementWriter) {
+    override fun endElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         writer.endElement(uri, localName, qName)
     }
 }
 
 /** Appends new ServiceLink elements before forwarding the serviceLinks close tag. */
-private class ServiceLinksHandler(private val ctx: InjectionContext) : PassThroughHandler() {
-    override fun endElement(uri: String?, localName: String?, qName: String?, writer: DelegatingXMLElementWriter) {
+private class ServiceLinksHandler(
+    private val ctx: InjectionContext,
+) : PassThroughHandler() {
+    override fun endElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         if (!ctx.linksInjected) {
             NeTExXmlWriter.writeServiceLinkElements(ctx.plan.newServiceLinks, writer)
             ctx.linksInjected = true
@@ -123,8 +172,15 @@ private class ServiceLinksHandler(private val ctx: InjectionContext) : PassThrou
 }
 
 /** Appends stub ScheduledStopPoint elements before forwarding the scheduledStopPoints close tag. */
-private class ScheduledStopPointsHandler(private val ctx: InjectionContext) : PassThroughHandler() {
-    override fun endElement(uri: String?, localName: String?, qName: String?, writer: DelegatingXMLElementWriter) {
+private class ScheduledStopPointsHandler(
+    private val ctx: InjectionContext,
+) : PassThroughHandler() {
+    override fun endElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         if (!ctx.stopsInjected) {
             NeTExXmlWriter.writeStubStopPoints(ctx.plan.stubScheduledStopPoints, writer)
             ctx.stopsInjected = true
@@ -134,13 +190,26 @@ private class ScheduledStopPointsHandler(private val ctx: InjectionContext) : Pa
 }
 
 /** Reads JP id on open, emits merged linksInSequence before forwarding the close tag. */
-private class JourneyPatternHandler(private val ctx: InjectionContext) : PassThroughHandler() {
-    override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes?, writer: DelegatingXMLElementWriter) {
+private class JourneyPatternHandler(
+    private val ctx: InjectionContext,
+) : PassThroughHandler() {
+    override fun startElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        attributes: Attributes?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         ctx.currentJpId = attributes?.getValue("id")
         writer.startElement(uri, localName, qName, attributes)
     }
 
-    override fun endElement(uri: String?, localName: String?, qName: String?, writer: DelegatingXMLElementWriter) {
+    override fun endElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         val jpId = ctx.currentJpId
         if (jpId != null) {
             val links = ctx.plan.journeyPatternLinks[jpId]
@@ -154,8 +223,16 @@ private class JourneyPatternHandler(private val ctx: InjectionContext) : PassThr
 }
 
 /** Emits missing sections BEFORE forwarding start tag — ensures correct schema ordering. */
-private class InsertBeforeHandler(private val ctx: InjectionContext) : PassThroughHandler() {
-    override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes?, writer: DelegatingXMLElementWriter) {
+private class InsertBeforeHandler(
+    private val ctx: InjectionContext,
+) : PassThroughHandler() {
+    override fun startElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        attributes: Attributes?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         if (!ctx.stopsInjected) {
             NeTExXmlWriter.writeScheduledStopPointsSection(ctx.plan.stubScheduledStopPoints, writer)
             ctx.stopsInjected = true
@@ -169,8 +246,15 @@ private class InsertBeforeHandler(private val ctx: InjectionContext) : PassThrou
 }
 
 /** Last-resort fallback: emits remaining sections before the ServiceFrame close tag. */
-private class ServiceFrameHandler(private val ctx: InjectionContext) : PassThroughHandler() {
-    override fun endElement(uri: String?, localName: String?, qName: String?, writer: DelegatingXMLElementWriter) {
+private class ServiceFrameHandler(
+    private val ctx: InjectionContext,
+) : PassThroughHandler() {
+    override fun endElement(
+        uri: String?,
+        localName: String?,
+        qName: String?,
+        writer: DelegatingXMLElementWriter,
+    ) {
         if (!ctx.stopsInjected) {
             NeTExXmlWriter.writeScheduledStopPointsSection(ctx.plan.stubScheduledStopPoints, writer)
             ctx.stopsInjected = true

@@ -4,6 +4,7 @@ spring-boot = "4.0.5"
 spring-dependency-management = "1.1.7"
 spring-cloud-gcp = "8.0.2"
 gradle-versions = "0.53.0"
+ktlint = "14.2.0"
 logstash-logback-encoder = "9.0"
 wiremock = "3.13.2"
 mockk = "1.14.9"
@@ -45,3 +46,4 @@ kotlin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotl
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }
 gradle-versions = { id = "com.github.ben-manes.versions", version.ref = "gradle-versions" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }

@@ -5,7 +5,7 @@ import kotlin.math.*
 
 data class Coordinate(
     val latitude: BigDecimal,
-    val longitude: BigDecimal
+    val longitude: BigDecimal,
 ) {
     override fun toString(): String = "$longitude,$latitude"
 

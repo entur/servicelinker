@@ -11,7 +11,6 @@ import org.xml.sax.Attributes
  * to resolve a JP's effective transport mode.
  */
 internal class LineRoutePlugin : AbstractNetexPlugin() {
-
     private val _lineModes = linkedMapOf<String, Map<String, TransportMode>>()
     private val _routeToLine = linkedMapOf<String, Map<String, String>>()
 
@@ -22,6 +21,7 @@ internal class LineRoutePlugin : AbstractNetexPlugin() {
     private var docRouteToLine: MutableMap<String, String> = linkedMapOf()
 
     private enum class Container { LINE, ROUTE }
+
     private var container: Container? = null
     private var currentId: String? = null
     private var currentMode: TransportMode? = null
@@ -30,42 +30,64 @@ internal class LineRoutePlugin : AbstractNetexPlugin() {
     private var modeText: StringBuilder? = null
 
     override fun getName() = "LineRoutePlugin"
-    override fun getDescription() = "Collects Line → mode and Route → LineRef maps"
-    override fun getSupportedElementTypes(): Set<String> = setOf(
-        "Line",
-        "Route",
-        "Line/TransportMode",
-        "Line/VehicleMode",
-        "Line/VehicleModes",
-        "Route/LineRef",
-    )
 
-    override fun startElement(elementName: String, attributes: Attributes?, currentEntity: Entity?) {
+    override fun getDescription() = "Collects Line → mode and Route → LineRef maps"
+
+    override fun getSupportedElementTypes(): Set<String> =
+        setOf(
+            "Line",
+            "Route",
+            "Line/TransportMode",
+            "Line/VehicleMode",
+            "Line/VehicleModes",
+            "Route/LineRef",
+        )
+
+    override fun startElement(
+        elementName: String,
+        attributes: Attributes?,
+        currentEntity: Entity?,
+    ) {
         when (elementName) {
             "Line" -> {
                 container = Container.LINE
                 currentId = attributes?.getValue("id")
                 currentMode = null
             }
+
             "Route" -> {
                 container = Container.ROUTE
                 currentId = attributes?.getValue("id")
                 currentLineRef = null
             }
-            "TransportMode", "VehicleMode", "VehicleModes" -> if (container == Container.LINE && currentMode == null) {
-                modeText = StringBuilder()
+
+            "TransportMode", "VehicleMode", "VehicleModes" -> {
+                if (container == Container.LINE && currentMode == null) {
+                    modeText = StringBuilder()
+                }
             }
-            "LineRef" -> if (container == Container.ROUTE && currentLineRef == null) {
-                currentLineRef = attributes?.getValue("ref")
+
+            "LineRef" -> {
+                if (container == Container.ROUTE && currentLineRef == null) {
+                    currentLineRef = attributes?.getValue("ref")
+                }
             }
         }
     }
 
-    override fun characters(elementName: String, ch: CharArray?, start: Int, length: Int) {
+    override fun characters(
+        elementName: String,
+        ch: CharArray?,
+        start: Int,
+        length: Int,
+    ) {
         if (ch != null) modeText?.append(ch, start, length)
     }
 
-    override fun endElement(elementName: String, currentEntity: Entity?) {
+    override fun endElement(
+        elementName: String,
+        currentEntity: Entity?,
+    ) {
         when (elementName) {
             "TransportMode", "VehicleMode", "VehicleModes" -> {
                 if (container == Container.LINE && currentMode == null) {
@@ -73,6 +95,7 @@ internal class LineRoutePlugin : AbstractNetexPlugin() {
                 }
                 modeText = null
             }
+
             "Line" -> {
                 val id = currentId
                 val mode = currentMode
@@ -81,6 +104,7 @@ internal class LineRoutePlugin : AbstractNetexPlugin() {
                 currentId = null
                 currentMode = null
             }
+
             "Route" -> {
                 val id = currentId
                 val lineRef = currentLineRef

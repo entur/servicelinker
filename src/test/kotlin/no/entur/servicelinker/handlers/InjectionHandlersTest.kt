@@ -17,38 +17,52 @@ import javax.xml.parsers.DocumentBuilderFactory
  * that aren't covered by the end-to-end NetexProcessorTest.
  */
 class InjectionHandlersTest {
-
     private val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
 
-    private fun parse(xml: ByteArray): Document =
-        factory.newDocumentBuilder().parse(ByteArrayInputStream(xml))
+    private fun parse(xml: ByteArray): Document = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml))
 
-    private fun applyViaHandlers(xml: String, plan: InjectionPlan): ByteArray {
+    private fun applyViaHandlers(
+        xml: String,
+        plan: InjectionPlan,
+    ): ByteArray {
         val handlers = InjectionHandlerFactory.buildHandlerMap(plan)
-        val config = FilterConfig(
-            customElementHandlers = handlers,
-            elementsRequiredChildren = if (plan.journeyPatternLinks.isNotEmpty())
-                mapOf("linksInSequence" to listOf("ServiceLinkInJourneyPattern"))
-            else emptyMap(),
-        )
+        val config =
+            FilterConfig(
+                customElementHandlers = handlers,
+                elementsRequiredChildren =
+                    if (plan.journeyPatternLinks.isNotEmpty()) {
+                        mapOf("linksInSequence" to listOf("ServiceLinkInJourneyPattern"))
+                    } else {
+                        emptyMap()
+                    },
+            )
         val processor = NetexProcessor(filterConfig = config)
         val docs = mapOf("test.xml" to xml.toByteArray())
         processor.buildEntityModel(docs)
 
         // Exclude SLIJP entities for JPs with planned replacements
-        val slijpIdsToExclude = processor.model
-            .getEntitiesOfType("ServiceLinkInJourneyPattern")
-            .filter { plan.journeyPatternLinks.containsKey(it.parent?.id) }
-            .map { it.id }
-            .toSet()
+        val slijpIdsToExclude =
+            processor.model
+                .getEntitiesOfType("ServiceLinkInJourneyPattern")
+                .filter { plan.journeyPatternLinks.containsKey(it.parent?.id) }
+                .map { it.id }
+                .toSet()
 
         val (es, rs) = processor.selectEntities()
-        val modifiedSelection = if (slijpIdsToExclude.isNotEmpty()) {
-            val slijpMap = es.selection["ServiceLinkInJourneyPattern"]
-            if (slijpMap != null) es.withReplaced("ServiceLinkInJourneyPattern",
-                slijpMap.filterKeys { it !in slijpIdsToExclude })
-            else es
-        } else es
+        val modifiedSelection =
+            if (slijpIdsToExclude.isNotEmpty()) {
+                val slijpMap = es.selection["ServiceLinkInJourneyPattern"]
+                if (slijpMap != null) {
+                    es.withReplaced(
+                        "ServiceLinkInJourneyPattern",
+                        slijpMap.filterKeys { it !in slijpIdsToExclude },
+                    )
+                } else {
+                    es
+                }
+            } else {
+                es
+            }
 
         val result = processor.exportToByteArrays(docs, modifiedSelection, rs)
         return requireNotNull(result.documents["test.xml"])
@@ -60,7 +74,8 @@ class InjectionHandlersTest {
 
     @Test
     fun `JP not in plan keeps its existing linksInSequence untouched`() {
-        val xml = """
+        val xml =
+            """
             <?xml version="1.0" encoding="UTF-8"?>
             <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
               <dataObjects>
@@ -89,17 +104,20 @@ class InjectionHandlersTest {
                 </frames></CompositeFrame>
               </dataObjects>
             </PublicationDelivery>
-        """.trimIndent()
+            """.trimIndent()
 
-        val plan = InjectionPlan(
-            newServiceLinks = emptyList(),
-            stubScheduledStopPoints = emptyMap(),
-            journeyPatternLinks = mapOf(
-                "JP:modified" to listOf(
-                    SlijpEntry("NEW:1", "1", 1, "SL:new", null)
-                )
-            ),
-        )
+        val plan =
+            InjectionPlan(
+                newServiceLinks = emptyList(),
+                stubScheduledStopPoints = emptyMap(),
+                journeyPatternLinks =
+                    mapOf(
+                        "JP:modified" to
+                            listOf(
+                                SlijpEntry("NEW:1", "1", 1, "SL:new", null),
+                            ),
+                    ),
+            )
 
         val result = applyViaHandlers(xml, plan)
         val doc = parse(result)
@@ -125,7 +143,8 @@ class InjectionHandlersTest {
 
     @Test
     fun `injection works with ServiceFrame directly under dataObjects`() {
-        val xml = """
+        val xml =
+            """
             <?xml version="1.0" encoding="UTF-8"?>
             <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
               <dataObjects>
@@ -141,15 +160,17 @@ class InjectionHandlersTest {
                 </ServiceFrame>
               </dataObjects>
             </PublicationDelivery>
-        """.trimIndent()
+            """.trimIndent()
 
-        val plan = InjectionPlan(
-            newServiceLinks = listOf(sampleServiceLink()),
-            stubScheduledStopPoints = mapOf("SSP:B" to "1"),
-            journeyPatternLinks = mapOf(
-                "JP:1" to listOf(SlijpEntry("SLIJP:1", "1", 1, "SL:A-B", null))
-            ),
-        )
+        val plan =
+            InjectionPlan(
+                newServiceLinks = listOf(sampleServiceLink()),
+                stubScheduledStopPoints = mapOf("SSP:B" to "1"),
+                journeyPatternLinks =
+                    mapOf(
+                        "JP:1" to listOf(SlijpEntry("SLIJP:1", "1", 1, "SL:A-B", null)),
+                    ),
+            )
 
         val result = applyViaHandlers(xml, plan)
         val doc = parse(result)
@@ -166,13 +187,17 @@ class InjectionHandlersTest {
         // Schema ordering: scheduledStopPoints < serviceLinks < journeyPatterns
         val sf = doc.getElementsByTagName("ServiceFrame").item(0) as Element
         val children = sf.childNodes
-        var stopsPos = -1; var linksPos = -1; var jpPos = -1
+        var stopsPos = -1
+        var linksPos = -1
+        var jpPos = -1
         for (i in 0 until children.length) {
             val node = children.item(i)
-            if (node is Element) when (node.localName) {
-                "scheduledStopPoints" -> stopsPos = i
-                "serviceLinks" -> linksPos = i
-                "journeyPatterns" -> jpPos = i
+            if (node is Element) {
+                when (node.localName) {
+                    "scheduledStopPoints" -> stopsPos = i
+                    "serviceLinks" -> linksPos = i
+                    "journeyPatterns" -> jpPos = i
+                }
             }
         }
         assertTrue(stopsPos < linksPos, "stops before links")
@@ -185,7 +210,8 @@ class InjectionHandlersTest {
 
     @Test
     fun `XML comments are preserved in output`() {
-        val xml = """
+        val xml =
+            """
             <?xml version="1.0" encoding="UTF-8"?>
             <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
               <!-- top-level comment -->
@@ -202,14 +228,14 @@ class InjectionHandlersTest {
                 </frames></CompositeFrame>
               </dataObjects>
             </PublicationDelivery>
-        """.trimIndent()
+            """.trimIndent()
 
-        val plan = InjectionPlan(
-            newServiceLinks = listOf(sampleServiceLink()),
-            stubScheduledStopPoints = emptyMap(),
-            journeyPatternLinks = emptyMap(),
-
-        )
+        val plan =
+            InjectionPlan(
+                newServiceLinks = listOf(sampleServiceLink()),
+                stubScheduledStopPoints = emptyMap(),
+                journeyPatternLinks = emptyMap(),
+            )
 
         val result = applyViaHandlers(xml, plan)
         val output = String(result, Charsets.UTF_8)
@@ -225,7 +251,8 @@ class InjectionHandlersTest {
     @Test
     fun `GML namespace is declared when injecting ServiceLinks into file without GML`() {
         // Input has no xmlns:gis or xmlns:gml declaration
-        val xml = """
+        val xml =
+            """
             <?xml version="1.0" encoding="UTF-8"?>
             <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
               <dataObjects>
@@ -240,15 +267,16 @@ class InjectionHandlersTest {
                 </frames></CompositeFrame>
               </dataObjects>
             </PublicationDelivery>
-        """.trimIndent()
+            """.trimIndent()
 
         assertFalse(xml.contains("gml"), "Test setup: input must not mention GML")
 
-        val plan = InjectionPlan(
-            newServiceLinks = listOf(sampleServiceLink()),
-            stubScheduledStopPoints = emptyMap(),
-            journeyPatternLinks = emptyMap(),
-        )
+        val plan =
+            InjectionPlan(
+                newServiceLinks = listOf(sampleServiceLink()),
+                stubScheduledStopPoints = emptyMap(),
+                journeyPatternLinks = emptyMap(),
+            )
 
         val result = applyViaHandlers(xml, plan)
         val doc = parse(result)
@@ -263,15 +291,20 @@ class InjectionHandlersTest {
 
         // GML namespace should be declared on the root element, not on each LineString
         val rootLine = output.lines().first { it.contains("<PublicationDelivery") }
-        assertTrue(rootLine.contains("xmlns:gis="),
-            "GML namespace should be declared on root element")
-        assertFalse(output.contains("<gis:LineString xmlns:gis="),
-            "LineString should not carry its own xmlns:gis declaration")
+        assertTrue(
+            rootLine.contains("xmlns:gis="),
+            "GML namespace should be declared on root element",
+        )
+        assertFalse(
+            output.contains("<gis:LineString xmlns:gis="),
+            "LineString should not carry its own xmlns:gis declaration",
+        )
     }
 
     @Test
     fun `GML namespace hoisted to root when input already declares xmlns gis`() {
-        val xml = """
+        val xml =
+            """
             <?xml version="1.0" encoding="UTF-8"?>
             <PublicationDelivery xmlns="http://www.netex.org.uk/netex"
                                 xmlns:gis="http://www.opengis.net/gml/3.2" version="1.0">
@@ -287,27 +320,33 @@ class InjectionHandlersTest {
                 </frames></CompositeFrame>
               </dataObjects>
             </PublicationDelivery>
-        """.trimIndent()
+            """.trimIndent()
 
-        val plan = InjectionPlan(
-            newServiceLinks = listOf(sampleServiceLink()),
-            stubScheduledStopPoints = emptyMap(),
-            journeyPatternLinks = emptyMap(),
-        )
+        val plan =
+            InjectionPlan(
+                newServiceLinks = listOf(sampleServiceLink()),
+                stubScheduledStopPoints = emptyMap(),
+                journeyPatternLinks = emptyMap(),
+            )
 
         val result = applyViaHandlers(xml, plan)
         val output = String(result, Charsets.UTF_8)
 
         val rootLine = output.lines().first { it.contains("<PublicationDelivery") }
-        assertTrue(rootLine.contains("xmlns:gis="),
-            "GML namespace should be on root element")
-        assertFalse(output.contains("<gis:LineString xmlns:gis="),
-            "LineString should not carry its own xmlns:gis declaration")
+        assertTrue(
+            rootLine.contains("xmlns:gis="),
+            "GML namespace should be on root element",
+        )
+        assertFalse(
+            output.contains("<gis:LineString xmlns:gis="),
+            "LineString should not carry its own xmlns:gis declaration",
+        )
     }
 
     @Test
     fun `GML namespace declarations are deduplicated when input has gis and gml`() {
-        val xml = """
+        val xml =
+            """
             <?xml version="1.0" encoding="UTF-8"?>
             <PublicationDelivery xmlns="http://www.netex.org.uk/netex"
                                 xmlns:gis="http://www.opengis.net/gml/3.2"
@@ -324,32 +363,48 @@ class InjectionHandlersTest {
                 </frames></CompositeFrame>
               </dataObjects>
             </PublicationDelivery>
-        """.trimIndent()
+            """.trimIndent()
 
-        val plan = InjectionPlan(
-            newServiceLinks = listOf(sampleServiceLink()),
-            stubScheduledStopPoints = emptyMap(),
-            journeyPatternLinks = emptyMap(),
-        )
+        val plan =
+            InjectionPlan(
+                newServiceLinks = listOf(sampleServiceLink()),
+                stubScheduledStopPoints = emptyMap(),
+                journeyPatternLinks = emptyMap(),
+            )
 
         val result = applyViaHandlers(xml, plan)
         val output = String(result, Charsets.UTF_8)
 
-        assertTrue(output.contains("xmlns:gis=\"http://www.opengis.net/gml/3.2\""),
-            "Output should declare gis namespace")
-        assertFalse(output.contains("xmlns:gml="),
-            "Output should not keep gml namespace declaration")
-        assertEquals(1, Regex("xmlns:gis=").findAll(output).count(),
-            "Output should contain only one xmlns:gis declaration")
-        assertFalse(output.contains("<gis:LineString xmlns:gis="),
-            "LineString should not carry its own xmlns:gis declaration")
+        assertTrue(
+            output.contains("xmlns:gis=\"http://www.opengis.net/gml/3.2\""),
+            "Output should declare gis namespace",
+        )
+        assertFalse(
+            output.contains("xmlns:gml="),
+            "Output should not keep gml namespace declaration",
+        )
+        assertEquals(
+            1,
+            Regex("xmlns:gis=").findAll(output).count(),
+            "Output should contain only one xmlns:gis declaration",
+        )
+        assertFalse(
+            output.contains("<gis:LineString xmlns:gis="),
+            "LineString should not carry its own xmlns:gis declaration",
+        )
     }
 
-    private fun sampleServiceLink() = ServiceLinkData(
-        id = "SL:A-B", version = "1", distance = 1000,
-        projectionId = "LSP:1", gmlLineStringId = "ls_1",
-        posList = "59.0 10.0 60.0 11.0",
-        fromPointRef = "SSP:A", fromPointVersion = "1",
-        toPointRef = "SSP:B", toPointVersion = "1"
-    )
+    private fun sampleServiceLink() =
+        ServiceLinkData(
+            id = "SL:A-B",
+            version = "1",
+            distance = 1000,
+            projectionId = "LSP:1",
+            gmlLineStringId = "ls_1",
+            posList = "59.0 10.0 60.0 11.0",
+            fromPointRef = "SSP:A",
+            fromPointVersion = "1",
+            toPointRef = "SSP:B",
+            toPointVersion = "1",
+        )
 }

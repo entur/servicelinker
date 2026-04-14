@@ -22,7 +22,7 @@ data class ServiceLinkData(
     val fromPointRef: String,
     val fromPointVersion: String,
     val toPointRef: String,
-    val toPointVersion: String
+    val toPointVersion: String,
 )
 
 data class SlijpEntry(
@@ -31,12 +31,12 @@ data class SlijpEntry(
     val order: Int,
     val serviceLinkRef: String,
     /** Null to omit version attribute on ServiceLinkRef (cross-file compatibility). */
-    val serviceLinkRefVersion: String?
+    val serviceLinkRefVersion: String?,
 )
 
 /** Metadata about an existing ServiceLinkInJourneyPattern, extracted from a DOM parse. */
 data class ExistingSlijpInfo(
     val id: String,
     val version: String,
-    val serviceLinkRefVersion: String?
+    val serviceLinkRefVersion: String?,
 )

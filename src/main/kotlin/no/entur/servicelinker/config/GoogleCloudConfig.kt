@@ -13,7 +13,6 @@ import org.springframework.context.annotation.Configuration
 
 @Configuration
 class GoogleCloudConfig {
-
     private val logger = LoggerFactory.getLogger(GoogleCloudConfig::class.java)
 
     /**
@@ -38,19 +37,21 @@ class GoogleCloudConfig {
     @Bean
     fun storage(
         @Value("\${spring.cloud.gcp.project-id:local-project}") projectId: String,
-        credentialsProvider: CredentialsProvider
+        credentialsProvider: CredentialsProvider,
     ): Storage {
         val emulatorHost = System.getenv("STORAGE_EMULATOR_HOST")
         if (!emulatorHost.isNullOrBlank()) {
             logger.info("Using GCS emulator at $emulatorHost")
-            return StorageOptions.newBuilder()
+            return StorageOptions
+                .newBuilder()
                 .setHost(emulatorHost)
                 .setProjectId(projectId)
                 .setCredentials(NoCredentials.getInstance())
                 .build()
                 .service
         }
-        return StorageOptions.newBuilder()
+        return StorageOptions
+            .newBuilder()
             .setProjectId(projectId)
             .setCredentials(credentialsProvider.credentials ?: NoCredentials.getInstance())
             .build()
