@@ -24,7 +24,7 @@ class InjectionHandlersTest {
         factory.newDocumentBuilder().parse(ByteArrayInputStream(xml))
 
     private fun applyViaHandlers(xml: String, plan: InjectionPlan): ByteArray {
-        val handlers = buildHandlerMap(plan)
+        val handlers = InjectionHandlerFactory.buildHandlerMap(plan)
         val config = FilterConfig(
             customElementHandlers = handlers,
             elementsRequiredChildren = if (plan.journeyPatternLinks.isNotEmpty())

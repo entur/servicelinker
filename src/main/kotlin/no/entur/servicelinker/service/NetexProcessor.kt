@@ -1,7 +1,7 @@
 package no.entur.servicelinker.service
 
 import kotlinx.coroutines.CancellationException
-import no.entur.servicelinker.handlers.buildHandlerMap
+import no.entur.servicelinker.handlers.InjectionHandlerFactory
 import no.entur.servicelinker.model.ExistingSlijpInfo
 import no.entur.servicelinker.model.InjectionPlan
 import no.entur.servicelinker.model.OSRMRoute
@@ -126,7 +126,7 @@ class NetexProcessor(
     fun applyPlan(input: ByteArray, plan: InjectionPlan): ByteArray {
         if (plan.isEmpty) return input
 
-        val handlers = buildHandlerMap(plan)
+        val handlers = InjectionHandlerFactory.buildHandlerMap(plan)
         val filterConfig = FilterConfig(
             customElementHandlers = handlers,
             // linksInSequence elements whose SLIJP children are excluded from the
