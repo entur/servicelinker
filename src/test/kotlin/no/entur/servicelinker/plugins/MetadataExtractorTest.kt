@@ -8,11 +8,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Direct tests for [Pass1PluginExtractor] covering the edge cases whose parity-based
- * coverage was retired when the DOM path was deleted.
+ * Direct tests for [MetadataExtractor] covering edge cases for stop point extraction,
+ * journey pattern mode resolution, and extractor reuse safety.
  */
-class Pass1PluginExtractorTest {
-    private val extractor = Pass1PluginExtractor()
+class MetadataExtractorTest {
+    private val extractor = MetadataExtractor()
 
     // --- StopPlace + Centroid guard --------------------------------------------------
 

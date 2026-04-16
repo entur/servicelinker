@@ -7,7 +7,7 @@ import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.StopPoint
-import no.entur.servicelinker.plugins.Pass1PluginExtractor
+import no.entur.servicelinker.plugins.MetadataExtractor
 import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -32,13 +32,13 @@ class NetexProcessorTest {
     @BeforeEach
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, Pass1PluginExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor())
     }
 
-    private fun getSampleNetexInputStream(): InputStream {
-        val inputStream = javaClass.getResourceAsStream("/sample-netex.xml")
-        return requireNotNull(inputStream) { "sample-netex.xml not found in test resources" }
-    }
+    private fun getSampleNetexBytes(): ByteArray =
+        requireNotNull(javaClass.getResourceAsStream("/sample-netex.xml")) {
+            "sample-netex.xml not found in test resources"
+        }.readBytes()
 
     private fun mockOsrmWithRoute(
         coords: List<Coordinate>,
@@ -66,8 +66,8 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
-            val inputStream = getSampleNetexInputStream()
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(inputBytes)
 
             assertTrue(processedXml.isNotEmpty(), "Processed XML should not be empty")
             // JourneyPattern has stops 1→2→3, existing ServiceLink covers 1→2, so only 2→3 is new
@@ -84,8 +84,8 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
-            val inputStream = getSampleNetexInputStream()
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(inputBytes)
 
             val processedDocument = parseXmlFromBytes(processedXml)
             val serviceLinks = processedDocument.getElementsByTagName("ServiceLink")
@@ -151,7 +151,7 @@ class NetexProcessorTest {
                 </PublicationDelivery>
                 """.trimIndent()
 
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream())
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.toByteArray())
             assertEquals(1, addedCount)
 
             val doc = parseXmlFromBytes(processedXml)
@@ -181,11 +181,11 @@ class NetexProcessorTest {
         runTest {
             mockOsrmFailure()
 
-            val inputStream = getSampleNetexInputStream()
+            val inputBytes = getSampleNetexBytes()
 
             var exceptionThrown = false
             try {
-                val (processedXml, _) = netexProcessor.processNetexFile(inputStream)
+                val (processedXml, _) = netexProcessor.processNetexFile(inputBytes)
                 assertTrue(processedXml.isNotEmpty(), "Should still produce valid XML")
             } catch (_: Exception) {
                 exceptionThrown = true
@@ -199,8 +199,8 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToBergenCoords, 6_000_000.0, 72000.0) // 6000km - should be filtered out
 
-            val inputStream = getSampleNetexInputStream()
-            val (_, addedCount) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (_, addedCount) = netexProcessor.processNetexFile(inputBytes)
 
             assertEquals(0, addedCount, "Should not add service links for routes over 5000km")
         }
@@ -208,8 +208,8 @@ class NetexProcessorTest {
     @Test
     fun `should extract correct stop point information from sample file`() =
         runTest {
-            val inputStream = getSampleNetexInputStream()
-            val document = parseXmlFromStream(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val document = parseXmlFromBytes(inputBytes)
 
             // Verify the document contains the expected stop points
             val scheduledStopPoints = document.getElementsByTagName("ScheduledStopPoint")
@@ -228,8 +228,8 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToDrammenCoords, 25000.0, 1800.0)
 
-            val inputStream = getSampleNetexInputStream()
-            val (processedXml, _) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (processedXml, _) = netexProcessor.processNetexFile(inputBytes)
 
             val processedDocument = parseXmlFromBytes(processedXml)
             val serviceLinks = processedDocument.getElementsByTagName("ServiceLink")
@@ -254,8 +254,8 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
-            val inputStream = getSampleNetexInputStream()
-            val (processedXml, _) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (processedXml, _) = netexProcessor.processNetexFile(inputBytes)
 
             val processedDocument = parseXmlFromBytes(processedXml)
 
@@ -283,8 +283,8 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
-            val inputStream = getSampleNetexInputStream()
-            val (processedXml, _) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (processedXml, _) = netexProcessor.processNetexFile(inputBytes)
 
             val doc = parseXmlFromBytes(processedXml)
             val slijpElements = doc.getElementsByTagName("ServiceLinkInJourneyPattern")
@@ -316,8 +316,8 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
-            val inputStream = getSampleNetexInputStream()
-            val (processedXml, _) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (processedXml, _) = netexProcessor.processNetexFile(inputBytes)
 
             val doc = parseXmlFromBytes(processedXml)
             val slijpElements = doc.getElementsByTagName("ServiceLinkInJourneyPattern")
@@ -381,7 +381,7 @@ class NetexProcessorTest {
                 </PublicationDelivery>
                 """.trimIndent()
 
-            val (processedXml, _) = netexProcessor.processNetexFile(xml.byteInputStream())
+            val (processedXml, _) = netexProcessor.processNetexFile(xml.toByteArray())
             val doc = parseXmlFromBytes(processedXml)
 
             val slijpElements = doc.getElementsByTagName("ServiceLinkInJourneyPattern")
@@ -400,8 +400,8 @@ class NetexProcessorTest {
             // Existing link 1→2 stays. New pair 2→3 gets a 6000km route → filtered out.
             mockOsrmWithRoute(osloToBergenCoords, 6_000_000.0, 72000.0)
 
-            val inputStream = getSampleNetexInputStream()
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(inputBytes)
 
             assertEquals(0, addedCount)
 
@@ -451,7 +451,7 @@ class NetexProcessorTest {
                 </PublicationDelivery>
                 """.trimIndent()
 
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream())
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.toByteArray())
 
             assertEquals(0, addedCount, "No JourneyPatterns means no service links to add")
             val doc = parseXmlFromBytes(processedXml)
@@ -525,7 +525,7 @@ class NetexProcessorTest {
                 </PublicationDelivery>
                 """.trimIndent()
 
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream())
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.toByteArray())
 
             // 3 unique consecutive pairs: A→B (shared), B→C, B→D
             assertEquals(3, addedCount, "Should create 3 unique ServiceLinks (A→B shared, B→C, B→D)")
@@ -567,8 +567,8 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
-            val inputStream = getSampleNetexInputStream()
-            val (processedXml, _) = netexProcessor.processNetexFile(inputStream)
+            val inputBytes = getSampleNetexBytes()
+            val (processedXml, _) = netexProcessor.processNetexFile(inputBytes)
 
             val doc = parseXmlFromBytes(processedXml)
             val slijpElements = doc.getElementsByTagName("ServiceLinkInJourneyPattern")
@@ -644,7 +644,7 @@ class NetexProcessorTest {
                 </PublicationDelivery>
                 """.trimIndent()
 
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream())
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.toByteArray())
 
             assertEquals(1, addedCount, "Should only add the missing B→C link")
 
@@ -718,7 +718,7 @@ class NetexProcessorTest {
                 </PublicationDelivery>
                 """.trimIndent()
 
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream())
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(xml.toByteArray())
 
             assertEquals(1, addedCount, "Should create serviceLinks section and add one link")
 
@@ -792,7 +792,7 @@ class NetexProcessorTest {
 
             val (processedXml, addedCount) =
                 netexProcessor.processNetexFile(
-                    xml.byteInputStream(),
+                    xml.toByteArray(),
                     externalStops,
                 )
 
@@ -842,7 +842,7 @@ class NetexProcessorTest {
             """.trimIndent()
 
         val pass1 =
-            Pass1PluginExtractor().extract(
+            MetadataExtractor().extract(
                 NetexProcessor.SINGLE_DOC_NAME,
                 xml.toByteArray(Charsets.UTF_8),
             )
@@ -909,7 +909,7 @@ class NetexProcessorTest {
 
             val (_, addedCount) =
                 netexProcessor.processNetexFile(
-                    xml.byteInputStream(),
+                    xml.toByteArray(),
                     externalStops,
                 )
 
@@ -923,7 +923,7 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
             val xml = buildTwoStopNetex("bus")
-            val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), null)
+            val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), null)
             assertEquals(1, addedCount, "null filter should not restrict generation")
         }
 
@@ -932,7 +932,7 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
             val xml = buildTwoStopNetex("bus")
-            val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
+            val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), setOf("BUS"))
             assertEquals(1, addedCount, "BUS filter should include BUS journey pattern")
         }
 
@@ -940,7 +940,7 @@ class NetexProcessorTest {
     fun `modesFilter not matching line mode skips pair`() =
         runTest {
             val xml = buildTwoStopNetex("rail")
-            val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
+            val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), setOf("BUS"))
             assertEquals(0, addedCount, "BUS filter should skip RAIL journey pattern")
             coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
         }
@@ -949,7 +949,7 @@ class NetexProcessorTest {
     fun `empty modesFilter skips all pairs without calling OSRM`() =
         runTest {
             val xml = buildTwoStopNetex("bus")
-            val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), emptySet())
+            val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), emptySet())
             assertEquals(0, addedCount, "Empty filter should generate no service links")
             coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
         }
@@ -959,7 +959,7 @@ class NetexProcessorTest {
         runTest {
             // JP with no RouteRef/LineRef → null mode → excluded by any mode filter
             val xml = buildTwoStopNetexNoLine()
-            val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
+            val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), setOf("BUS"))
             assertEquals(0, addedCount, "JP with null transport mode should be excluded by a mode filter")
             coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
         }
@@ -970,7 +970,7 @@ class NetexProcessorTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
             // JP1: BUS (stops 1→2 ✓), JP2: RAIL (stops 2→3 ✗)
             val xml = buildTwoJourneyPatternNetex("bus", "rail")
-            val (_, addedCount) = netexProcessor.processNetexFile(xml.byteInputStream(), emptyMap(), setOf("BUS"))
+            val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), setOf("BUS"))
             assertEquals(1, addedCount, "Only the BUS journey pattern should get a service link")
         }
 
@@ -1119,7 +1119,7 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexInputStream())
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexBytes())
             assertEquals(1, addedCount)
 
             val doc = parseXmlFromBytes(processedXml)
@@ -1155,7 +1155,7 @@ class NetexProcessorTest {
             val osrmCoords = listOf(snappedFrom, intermediate, snappedTo)
             mockOsrmWithRoute(osrmCoords, 20000.0)
 
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexInputStream())
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexBytes())
             assertEquals(1, addedCount)
 
             val doc = parseXmlFromBytes(processedXml)
@@ -1194,7 +1194,7 @@ class NetexProcessorTest {
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
 
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexInputStream())
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexBytes())
             assertEquals(1, addedCount)
 
             val xmlString = String(processedXml, Charsets.UTF_8)
@@ -1217,7 +1217,7 @@ class NetexProcessorTest {
         runTest {
             // Input with gml: prefix (as some upstream sources produce)
             val inputWithGml =
-                String(getSampleNetexInputStream().readBytes(), Charsets.UTF_8)
+                String(getSampleNetexBytes(), Charsets.UTF_8)
                     .replace("xmlns:gis=", "xmlns:gml=")
                     .replace("gis:", "gml:")
 
@@ -1227,7 +1227,7 @@ class NetexProcessorTest {
             )
 
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
-            val (processedXml, _) = netexProcessor.processNetexFile(inputWithGml.byteInputStream())
+            val (processedXml, _) = netexProcessor.processNetexFile(inputWithGml.toByteArray())
             val xmlString = String(processedXml, Charsets.UTF_8)
 
             assertFalse(

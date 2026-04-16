@@ -11,43 +11,40 @@ import no.entur.servicelinker.model.ServiceLinkData
 import no.entur.servicelinker.model.SlijpEntry
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
-import no.entur.servicelinker.plugins.Pass1PluginExtractor
+import no.entur.servicelinker.plugins.MetadataExtractor
 import org.entur.netex.tools.lib.config.FilterConfig
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import java.io.InputStream
 import org.entur.netex.tools.lib.NetexProcessor as NetexToolsProcessor
 
 @Service
 class NetexProcessor(
     private val osrmService: OSRMService,
-    private val pass1Extractor: Pass1PluginExtractor,
+    private val metadataExtractor: MetadataExtractor,
 ) {
     private val logger = LoggerFactory.getLogger(NetexProcessor::class.java)
 
     suspend fun processNetexFile(
-        inputStream: InputStream,
+        inputBytes: ByteArray,
         externalStopPoints: Map<String, StopPoint> = emptyMap(),
         modesFilter: Set<String>? = null,
         limit: Int? = null,
     ): ProcessedDataset {
         logger.info("Starting NeTEx file processing")
-        @Suppress("BlockingMethodInNonBlockingContext") // Always a ByteArrayInputStream in practice
-        val inputBytes = inputStream.readAllBytes()
-        val pass1 = pass1Extractor.extract(SINGLE_DOC_NAME, inputBytes)
+        val metadata = metadataExtractor.extract(SINGLE_DOC_NAME, inputBytes)
 
         // Merge: local takes priority over external (which may include NSR-enriched stops)
-        val stopPointsMap = externalStopPoints + pass1.stopPoints.associateBy { it.id }
+        val stopPointsMap = externalStopPoints + metadata.stopPoints.associateBy { it.id }
 
         // Collect unique consecutive pairs from all JourneyPatterns
         val neededPairs = mutableMapOf<String, StationPair>()
-        for ((jpId, stopRefIds) in pass1.stopSequences) {
-            val jpMode = pass1.jpModeMap[jpId]
+        for ((jpId, stopRefIds) in metadata.stopSequences) {
+            val jpMode = metadata.jpModeMap[jpId]
             for (i in 0 until stopRefIds.size - 1) {
                 val fromRef = stopRefIds[i]
                 val toRef = stopRefIds[i + 1]
                 val pairKey = "${fromRef}_$toRef"
-                if (!pass1.existingServiceLinks.containsKey(pairKey) && !neededPairs.containsKey(pairKey)) {
+                if (!metadata.existingServiceLinks.containsKey(pairKey) && !neededPairs.containsKey(pairKey)) {
                     val from = stopPointsMap[fromRef]
                     val to = stopPointsMap[toRef]
                     if (from != null && to != null) {
@@ -59,7 +56,7 @@ class NetexProcessor(
         logger.info("Found ${neededPairs.size} consecutive pairs that need new service links")
 
         // allServiceLinks: pairKey → serviceLinkId (existing + newly created)
-        val allServiceLinks = pass1.existingServiceLinks.toMutableMap()
+        val allServiceLinks = metadata.existingServiceLinks.toMutableMap()
 
         val routedPairs = routePairs(neededPairs, modesFilter, limit)
         val newServiceLinkData = LinkedHashMap<String, ServiceLinkData>()
@@ -79,9 +76,9 @@ class NetexProcessor(
             buildInjectionPlan(
                 newServiceLinkData = newServiceLinkData,
                 allServiceLinks = allServiceLinks,
-                jpStopSequences = pass1.stopSequences,
-                existingSlijpEntries = pass1.existingSlijp,
-                declaredStopIds = pass1.stopIdsAndVersions.keys,
+                jpStopSequences = metadata.stopSequences,
+                existingSlijpEntries = metadata.existingSlijp,
+                declaredStopIds = metadata.stopIdsAndVersions.keys,
             )
 
         val modifiedXml = applyPlan(inputBytes, plan)

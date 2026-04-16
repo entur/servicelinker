@@ -6,7 +6,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMRoute
-import no.entur.servicelinker.plugins.Pass1PluginExtractor
+import no.entur.servicelinker.plugins.MetadataExtractor
 import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeEach
@@ -37,14 +37,14 @@ class ZipHandlingTest {
         mockOsrmService = mockk(relaxed = true)
         mockGcsService = mockk(relaxed = true)
         mockNsrService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, Pass1PluginExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor())
         serviceLinkProducerService =
             ServiceLinkProducerService(
                 mockGcsService,
                 netexProcessor,
                 mockOsrmService,
                 mockNsrService,
-                Pass1PluginExtractor(),
+                MetadataExtractor(),
                 "test-output",
             )
 

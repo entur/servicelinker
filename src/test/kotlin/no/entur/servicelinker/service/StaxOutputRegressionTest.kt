@@ -7,9 +7,7 @@ import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.ExistingSlijpInfo
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.ServiceLinkData
-import no.entur.servicelinker.model.StationPair
-import no.entur.servicelinker.model.StopPoint
-import no.entur.servicelinker.plugins.Pass1PluginExtractor
+import no.entur.servicelinker.plugins.MetadataExtractor
 import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -18,7 +16,6 @@ import org.w3c.dom.Document
 import org.w3c.dom.Element
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.io.InputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -45,7 +42,7 @@ class StaxOutputRegressionTest {
     @BeforeEach
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, Pass1PluginExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor())
 
         coEvery {
             mockOsrmService.calculateRoute(any(), any(), any())
@@ -67,7 +64,7 @@ class StaxOutputRegressionTest {
     fun `sample-netex full output verification`() =
         runTest {
             val inputBytes = getSampleNetexBytes()
-            val (outputBytes, addedCount) = netexProcessor.processNetexFile(ByteArrayInputStream(inputBytes))
+            val (outputBytes, addedCount) = netexProcessor.processNetexFile(inputBytes)
 
             assertEquals(1, addedCount, "Expected exactly 1 new ServiceLink (2→3)")
 
@@ -116,7 +113,10 @@ class StaxOutputRegressionTest {
             val stops = doc.getElementsByTagName("ScheduledStopPoint")
             assertEquals(3, stops.length, "All 3 ScheduledStopPoints preserved")
             val stopIds = (0 until stops.length).map { (stops.item(it) as Element).getAttribute("id") }
-            assertEquals(listOf("FIN:ScheduledStopPoint:1", "FIN:ScheduledStopPoint:2", "FIN:ScheduledStopPoint:3"), stopIds)
+            assertEquals(
+                listOf("FIN:ScheduledStopPoint:1", "FIN:ScheduledStopPoint:2", "FIN:ScheduledStopPoint:3"),
+                stopIds,
+            )
 
             // --- ServiceLinks: 1 existing + 1 new = 2 total ---
             val serviceLinks = doc.getElementsByTagName("ServiceLink")
@@ -253,9 +253,7 @@ class StaxOutputRegressionTest {
     fun `output is well-formed XML that can be re-parsed`() =
         runTest {
             val (outputBytes, _) =
-                netexProcessor.processNetexFile(
-                    ByteArrayInputStream(getSampleNetexBytes()),
-                )
+                netexProcessor.processNetexFile(getSampleNetexBytes())
 
             // Must parse without error
             val doc = parse(outputBytes)
@@ -267,11 +265,11 @@ class StaxOutputRegressionTest {
     fun `idempotent processing produces no additional changes`() =
         runTest {
             val inputBytes = getSampleNetexBytes()
-            val (firstPass, firstCount) = netexProcessor.processNetexFile(ByteArrayInputStream(inputBytes))
+            val (firstPass, firstCount) = netexProcessor.processNetexFile(inputBytes)
             assertEquals(1, firstCount)
 
             // Process the output again — should add 0 new links
-            val (secondPass, secondCount) = netexProcessor.processNetexFile(ByteArrayInputStream(firstPass))
+            val (secondPass, secondCount) = netexProcessor.processNetexFile(firstPass)
             assertEquals(0, secondCount, "Second pass should add no new service links")
 
             // Output should be identical to input (returned unchanged when addedCount=0)
@@ -295,7 +293,7 @@ class StaxOutputRegressionTest {
                     netexProcessor,
                     mockOsrmService,
                     mockNsrService,
-                    Pass1PluginExtractor(),
+                    MetadataExtractor(),
                     "test-output",
                 )
 
@@ -369,7 +367,7 @@ class StaxOutputRegressionTest {
                     netexProcessor,
                     mockOsrmService,
                     mockNsrService,
-                    Pass1PluginExtractor(),
+                    MetadataExtractor(),
                     "test-output",
                 )
 
@@ -429,7 +427,7 @@ class StaxOutputRegressionTest {
                 "Test setup: input must use gml prefix",
             )
 
-            val (outputBytes, addedCount) = netexProcessor.processNetexFile(inputWithGml.byteInputStream())
+            val (outputBytes, addedCount) = netexProcessor.processNetexFile(inputWithGml.toByteArray())
             assertEquals(1, addedCount)
 
             val xmlString = String(outputBytes, Charsets.UTF_8)
@@ -466,7 +464,7 @@ class StaxOutputRegressionTest {
                     netexProcessor,
                     mockOsrmService,
                     mockNsrService,
-                    Pass1PluginExtractor(),
+                    MetadataExtractor(),
                     "test-output",
                 )
 
@@ -621,7 +619,18 @@ class StaxOutputRegressionTest {
                 newServiceLinkData =
                     mapOf(
                         "TST:SSP:B_TST:SSP:C" to
-                            ServiceLinkData("SL:new", "1", 1000, "P:1", "ls:1", "59.0 10.0", "TST:SSP:B", "1", "TST:SSP:C", "1"),
+                            ServiceLinkData(
+                                "SL:new",
+                                "1",
+                                1000,
+                                "P:1",
+                                "ls:1",
+                                "59.0 10.0",
+                                "TST:SSP:B",
+                                "1",
+                                "TST:SSP:C",
+                                "1",
+                            ),
                     ),
                 allServiceLinks = allServiceLinks,
                 jpStopSequences = jpStopSequences,
@@ -651,7 +660,19 @@ class StaxOutputRegressionTest {
             netexProcessor.buildInjectionPlan(
                 newServiceLinkData =
                     mapOf(
-                        "A_B" to ServiceLinkData("SL:1", "1", null, "P:1", "ls:1", "59.0 10.0", "SSP:A", "1", "SSP:B", "42"),
+                        "A_B" to
+                            ServiceLinkData(
+                                "SL:1",
+                                "1",
+                                null,
+                                "P:1",
+                                "ls:1",
+                                "59.0 10.0",
+                                "SSP:A",
+                                "1",
+                                "SSP:B",
+                                "42",
+                            ),
                     ),
                 allServiceLinks = mapOf("A_B" to "SL:1"),
                 jpStopSequences = emptyMap(),

@@ -9,18 +9,15 @@ import org.entur.netex.tools.lib.config.FilterConfig
 import org.springframework.stereotype.Service
 
 /**
- * Facade that runs all Pass 1 plugins in a single `NetexProcessor.buildEntityModel` pass
- * and exposes the collected data in the same shapes `NetexProcessor` (servicelinker)
- * produces from DOM extraction.
+ * Extracts stop points, service links, journey patterns and mode info from NeTEx XML
+ * in a single SAX pass via netex-tools plugins.
  *
  * Each [extract] call builds fresh plugin instances, so the extractor is safe to reuse
  * across batches without state leaking between calls.
- *
- * The Pass 1 replacement for servicelinker's former DOM extraction code.
  */
 @Service
-class Pass1PluginExtractor {
-    fun extract(documents: Map<String, ByteArray>): Pass1Results {
+class MetadataExtractor {
+    fun extract(documents: Map<String, ByteArray>): ExtractionResults {
         val stopPointPlugin = StopPointPlugin()
         val stopAssignmentPlugin = StopAssignmentPlugin()
         val serviceLinkPlugin = ServiceLinkPlugin()
@@ -38,7 +35,7 @@ class Pass1PluginExtractor {
                         lineRoutePlugin,
                     ),
             )
-        NetexProcessor(CliConfig(), filterConfig).buildEntityModel(documents)
+        NetexProcessor(filterConfig = filterConfig).buildEntityModel(documents)
 
         val perDoc =
             documents.keys.associateWith { name ->
@@ -57,7 +54,7 @@ class Pass1PluginExtractor {
                         ),
                 )
             }
-        return Pass1Results(perDoc)
+        return ExtractionResults(perDoc)
     }
 
     fun extract(
@@ -119,7 +116,7 @@ data class DocResults(
     }
 }
 
-data class Pass1Results(
+data class ExtractionResults(
     val byDocument: Map<String, DocResults>,
 ) {
     fun forDocument(name: String): DocResults =

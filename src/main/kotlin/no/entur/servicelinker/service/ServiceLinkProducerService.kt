@@ -7,7 +7,7 @@ import no.entur.servicelinker.model.ProcessedDataset
 import no.entur.servicelinker.model.RoutedPair
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
-import no.entur.servicelinker.plugins.Pass1PluginExtractor
+import no.entur.servicelinker.plugins.MetadataExtractor
 import no.entur.servicelinker.plugins.RawPairRef
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
@@ -25,7 +25,7 @@ class ServiceLinkProducerService(
     private val netexProcessor: NetexProcessor,
     private val osrmService: OSRMService,
     private val nsrService: NsrService,
-    private val pass1Extractor: Pass1PluginExtractor,
+    private val metadataExtractor: MetadataExtractor,
     @Value("\${gcs.bucket.output}") private val outputBucket: String,
 ) {
     private val logger = LoggerFactory.getLogger(ServiceLinkProducerService::class.java)
@@ -87,7 +87,7 @@ class ServiceLinkProducerService(
         modesFilter: Set<String>? = null,
         limit: Int? = null,
     ): ProcessedDataset {
-        // PASS 1: stream each XML entry through the plugin extractor individually. Per-file
+        // Metadata extraction: stream each XML entry through the extractor individually. Per-file
         // error isolation (one malformed entry should not abort the archive) + bounded memory
         // (one entry's parse state at a time) + preserved ZIP iteration order for firstXmlFile.
         MDC.put("stage", "processing/parse")
@@ -110,11 +110,11 @@ class ServiceLinkProducerService(
                     if (firstXmlFile == null) firstXmlFile = entry.name
                     val entryBytes = zis.readBytes()
                     try {
-                        val doc = pass1Extractor.extract(entry.name, entryBytes)
+                        val doc = metadataExtractor.extract(entry.name, entryBytes)
                         allStopPoints.putAll(doc.stopPoints.associateBy { it.id })
                         allStopAssignments.putAll(doc.assignments)
                         logger.debug(
-                            "Pass 1 {}: {} ScheduledStopPoint IDs declared, {} with inline coords",
+                            "Metadata extraction {}: {} ScheduledStopPoint IDs declared, {} with inline coords",
                             entry.name,
                             doc.stopIdsAndVersions.size,
                             doc.stopPoints.size,
@@ -132,7 +132,7 @@ class ServiceLinkProducerService(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        logger.warn("Pass 1 failed for ${entry.name}: ${e.message}")
+                        logger.warn("Metadata extraction failed for ${entry.name}: ${e.message}")
                     }
                 }
                 entry = zis.nextEntry
@@ -245,7 +245,7 @@ class ServiceLinkProducerService(
         limit: Int? = null,
     ): ProcessedDataset {
         val enrichedStops = extractAndEnrichStops(xmlData)
-        return netexProcessor.processNetexFile(ByteArrayInputStream(xmlData), enrichedStops, modesFilter, limit)
+        return netexProcessor.processNetexFile(xmlData, enrichedStops, modesFilter, limit)
     }
 
     suspend fun processXmlContentDirectly(
@@ -260,7 +260,7 @@ class ServiceLinkProducerService(
             val enrichedStops = extractAndEnrichStops(xmlData)
             val (processedXml, addedCount) =
                 netexProcessor.processNetexFile(
-                    ByteArrayInputStream(xmlData),
+                    xmlData,
                     enrichedStops,
                     modesFilter,
                     limit,
@@ -283,7 +283,7 @@ class ServiceLinkProducerService(
 
     private suspend fun extractAndEnrichStops(xmlData: ByteArray): Map<String, StopPoint> =
         try {
-            val doc = pass1Extractor.extract(NetexProcessor.SINGLE_DOC_NAME, xmlData)
+            val doc = metadataExtractor.extract(NetexProcessor.SINGLE_DOC_NAME, xmlData)
             val stops = doc.stopPoints.associateBy { it.id }
             enrichStopPointsViaNsr(stops, doc.assignments)
         } catch (e: CancellationException) {
