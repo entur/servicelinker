@@ -10,12 +10,12 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBody
-import org.w3c.dom.Element
 import reactor.netty.http.client.HttpClient
-import java.io.ByteArrayInputStream
+import java.io.StringReader
 import java.time.Duration
 import java.util.concurrent.TimeUnit
-import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.stream.XMLInputFactory
+import javax.xml.stream.XMLStreamConstants
 
 @ConfigurationProperties(prefix = "nsr")
 data class NsrProperties(
@@ -93,33 +93,36 @@ class NsrService(
 
     private fun parseCoordinateFromXml(xml: String): Coordinate? {
         return try {
-            val document = documentBuilderFactory.newDocumentBuilder().parse(ByteArrayInputStream(xml.toByteArray()))
+            val reader = xmlInputFactory.createXMLStreamReader(StringReader(xml))
+            var latitude: java.math.BigDecimal? = null
+            var longitude: java.math.BigDecimal? = null
+            var inCentroid = false
+            var inLocation = false
 
-            val centroid = document.getElementsByTagName("Centroid").item(0) as? Element ?: return null
-            val location = centroid.getElementsByTagName("Location").item(0) as? Element ?: return null
-
-            val latitude = getElementText(location, "Latitude")?.toBigDecimalOrNull()
-            val longitude = getElementText(location, "Longitude")?.toBigDecimalOrNull()
-
-            if (latitude != null && longitude != null) {
-                Coordinate(latitude, longitude)
-            } else {
-                null
+            while (reader.hasNext()) {
+                when (reader.next()) {
+                    XMLStreamConstants.START_ELEMENT -> {
+                        when (reader.localName) {
+                            "Centroid" -> inCentroid = true
+                            "Location" -> if (inCentroid) inLocation = true
+                            "Latitude" -> if (inLocation) latitude = reader.elementText.trim().toBigDecimalOrNull()
+                            "Longitude" -> if (inLocation) longitude = reader.elementText.trim().toBigDecimalOrNull()
+                        }
+                    }
+                    XMLStreamConstants.END_ELEMENT -> {
+                        when (reader.localName) {
+                            "Centroid" -> inCentroid = false
+                            "Location" -> inLocation = false
+                        }
+                    }
+                }
+                if (latitude != null && longitude != null) break
             }
+            reader.close()
+
+            if (latitude != null && longitude != null) Coordinate(latitude, longitude) else null
         } catch (e: Exception) {
             logger.warn("Failed to parse NSR XML response: {}", e.message)
-            null
-        }
-    }
-
-    private fun getElementText(
-        parent: Element,
-        tagName: String,
-    ): String? {
-        val elements = parent.getElementsByTagName(tagName)
-        return if (elements.length > 0) {
-            elements.item(0).textContent?.trim()
-        } else {
             null
         }
     }
@@ -127,6 +130,6 @@ class NsrService(
     fun getCacheSize(): Long = coordinateCache.estimatedSize()
 
     private companion object {
-        val documentBuilderFactory: DocumentBuilderFactory = DocumentBuilderFactory.newInstance()
+        val xmlInputFactory: XMLInputFactory = XMLInputFactory.newInstance()
     }
 }

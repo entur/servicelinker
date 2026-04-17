@@ -39,6 +39,17 @@ dependencyManagement {
 }
 
 dependencies {
+    constraints {
+        implementation("org.apache.tomcat.embed:tomcat-embed-core") {
+            version { strictly("[11.0.21,)") }
+            because("fix GHSA-24j9-x2wg-9qv6, GHSA-rv64-5gf8-9qq8, GHSA-x4m4-345f-5h5g")
+        }
+        implementation("tools.jackson:jackson-bom") {
+            version { strictly("[3.1.1,)") }
+            because("fix GHSA-2m67-wjpj-xhg9")
+        }
+    }
+
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.web)
     implementation(libs.spring.boot.starter.webflux)
