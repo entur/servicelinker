@@ -111,7 +111,7 @@ tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
 }
 
 // https://github.com/ben-manes/gradle-versions-plugin/issues/968
-tasks.named("dependencyUpdates") {
+tasks.dependencyUpdates {
     doFirst {
         gradle.startParameter.isParallelProjectExecutionEnabled = false
     }
