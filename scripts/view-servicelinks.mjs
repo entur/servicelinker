@@ -1,17 +1,24 @@
 #!/usr/bin/env node
-// view-servicelinks <netex.xml|netex.zip>
-// Extracts ServiceLink geometries and opens an interactive Leaflet map in the browser.
+// view-servicelinks <file.xml|file.zip> [...]
+// Extracts ServiceLink geometries and TopographicPlace centroids from any combination of NeTEx XML/ZIP files
+// and opens an interactive Leaflet map in the browser.
 
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
-import { execSync, spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, basename, extname } from 'node:path';
 
-const [, , path] = process.argv;
+const inputs = process.argv.slice(2);
 
-if (!path || !existsSync(path)) {
-  console.error(path ? `File not found: ${path}` : 'Usage: view-servicelinks <netex.xml|netex.zip>');
+if (inputs.length === 0) {
+  console.error('Usage: view-servicelinks <file.xml|file.zip> [...]');
   process.exit(1);
+}
+for (const p of inputs) {
+  if (!existsSync(p)) {
+    console.error(`File not found: ${p}`);
+    process.exit(1);
+  }
 }
 
 function parsePosListToCoords(text) {
@@ -54,7 +61,7 @@ function buildStopNames(xmlList) {
 
 function extractFeatures(xml, resolveName) {
   const linkRe = /<ServiceLink[^>]*\bid="([^"]+)"[\s\S]*?<\/ServiceLink>/g;
-  const posRe  = /<\w+:posList[^>]*>([\s\S]*?)<\/\w+:posList>/;
+  const posRe  = /<(?:\w+:)?posList[^>]*>([\s\S]*?)<\/(?:\w+:)?posList>/;
   const fromRe = /<FromPointRef[^>]+ref="([^"]+)"/;
   const toRe   = /<ToPointRef[^>]+ref="([^"]+)"/;
 
@@ -69,38 +76,62 @@ function extractFeatures(xml, resolveName) {
   });
 }
 
-function collectFeatures(path) {
-  if (extname(path).toLowerCase() !== '.zip') {
-    const xml = readFileSync(path, 'utf8');
-    return extractFeatures(xml, buildStopNames([xml]));
-  }
+function extractTopographicPlaces(xml) {
+  const placeRe = /<TopographicPlace\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/TopographicPlace>/g;
+  return [...xml.matchAll(placeRe)].flatMap(([, id, body]) => {
+    const lon = Number(/<Longitude>([^<]+)<\/Longitude>/.exec(body)?.[1]);
+    const lat = Number(/<Latitude>([^<]+)<\/Latitude>/.exec(body)?.[1]);
+    // Pick the TopographicPlace's own Name, not a nested Descriptor/Name — match before Centroid.
+    const head = body.split(/<Centroid\b/)[0];
+    const name = /<Name[^>]*>([^<]+)<\/Name>/.exec(head)?.[1]?.trim() ?? null;
+    const type = /<TopographicPlaceType>([^<]+)<\/TopographicPlaceType>/.exec(body)?.[1] ?? null;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return [];
+    return [{ type: 'Feature', properties: { id, name, type }, geometry: { type: 'Point', coordinates: [lon, lat] } }];
+  });
+}
 
+function readXmls(path) {
+  if (extname(path).toLowerCase() !== '.zip') {
+    return [{ name: basename(path), xml: readFileSync(path, 'utf8') }];
+  }
   const tmp = mkdtempSync(join(tmpdir(), 'view-servicelinks-'));
   try {
-    execSync(`unzip -q "${path}" -d "${tmp}"`);
-    const xmlFiles = execSync(`find "${tmp}" -name "*.xml"`, { encoding: 'utf8' })
-      .trim().split('\n').filter(Boolean);
-    console.log(`Processing ${xmlFiles.length} XML file(s) in ZIP...`);
-    const xmlList = xmlFiles.map(f => readFileSync(f, 'utf8'));
-    const resolveName = buildStopNames(xmlList);
-    return xmlList.flatMap((xml, i) => {
-      const found = extractFeatures(xml, resolveName);
-      console.log(`  ${basename(xmlFiles[i])}: ${found.length} ServiceLinks`);
-      return found;
-    });
+    const r = spawnSync('unzip', ['-q', path, '-d', tmp], { stdio: 'inherit' });
+    if (r.status !== 0) throw new Error(`unzip failed for ${path}`);
+    const xmlFiles = readdirSync(tmp, { recursive: true })
+      .filter(f => f.toLowerCase().endsWith('.xml'))
+      .map(f => join(tmp, f));
+    return xmlFiles.map(f => ({ name: `${basename(path)}:${basename(f)}`, xml: readFileSync(f, 'utf8') }));
   } finally {
-    rmSync(tmp, { recursive: true });
+    rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-const features = collectFeatures(path);
+// Escape characters that would terminate the inline <script> block when embedding JSON.
+const safeJson = obj => JSON.stringify(obj).replace(/</g, '\\u003c').replace(/-->/g, '--\\u003e').replace(/]]>/g, ']]\\u003e');
+
+const xmls = inputs.flatMap(readXmls);
+const resolveName = buildStopNames(xmls.map(x => x.xml));
+
+const features = xmls.flatMap(({ name, xml }) => {
+  const found = extractFeatures(xml, resolveName);
+  if (found.length > 0) console.log(`  ${name}: ${found.length} ServiceLinks`);
+  return found;
+});
 console.log(`Total: ${features.length} ServiceLinks`);
 
+const pois = xmls.flatMap(({ name, xml }) => {
+  const found = extractTopographicPlaces(xml);
+  if (found.length > 0) console.log(`  ${name}: ${found.length} TopographicPlaces`);
+  return found;
+});
+console.log(`Total: ${pois.length} TopographicPlaces`);
+
 const html = `<!DOCTYPE html>
-<html>
+<html lang="no">
 <head>
   <meta charset="utf-8"/>
-  <title>${basename(path)}</title>
+  <title>${inputs.map(p => basename(p)).join(', ')}</title>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.19.0/dist/maplibre-gl.css"/>
   <script src="https://unpkg.com/maplibre-gl@5.19.0/dist/maplibre-gl.js"></script>
   <style>html, body, #map { margin: 0; padding: 0; height: 100% }</style>
@@ -118,7 +149,8 @@ const html = `<!DOCTYPE html>
     center: [14, 63], zoom: 4,
   });
 
-  const geojson = ${JSON.stringify({ type: 'FeatureCollection', features })};
+  const geojson = ${safeJson({ type: 'FeatureCollection', features })};
+  const poiGeojson = ${safeJson({ type: 'FeatureCollection', features: pois })};
 
   const stops = {
     type: 'FeatureCollection',
@@ -140,6 +172,10 @@ const html = `<!DOCTYPE html>
     map.addLayer({ id: 'stops', type: 'circle', source: 'stops',
                    paint: { 'circle-radius': 5, 'circle-color': '#e63946', 'circle-stroke-width': 1, 'circle-stroke-color': '#fff' } });
 
+    map.addSource('pois', { type: 'geojson', data: poiGeojson });
+    map.addLayer({ id: 'pois', type: 'circle', source: 'pois',
+                   paint: { 'circle-radius': 5, 'circle-color': '#1d4ed8', 'circle-stroke-width': 1, 'circle-stroke-color': '#fff' } });
+
     const tooltip = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
     map.on('mousemove',  'links', e => tooltip.setLngLat(e.lngLat).setHTML(e.features[0].properties.id).addTo(map));
     map.on('mouseleave', 'links', () => tooltip.remove());
@@ -151,15 +187,22 @@ const html = `<!DOCTYPE html>
     map.on('mouseenter', 'stops', () => map.getCanvas().style.cursor = 'pointer');
     map.on('mouseleave', 'stops', () => map.getCanvas().style.cursor = '');
 
-    if (geojson.features.length > 0) {
-      const bounds = geojson.features.flatMap(f => f.geometry.coordinates)
-        .reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds());
-      map.fitBounds(bounds, { padding: 40 });
+    map.on('mousemove',  'pois', e => { const p = e.features[0].properties; const label = p.name ? p.name + ' (' + p.id + ')' : p.id; tooltip.setLngLat(e.lngLat).setHTML(label).addTo(map); });
+    map.on('mouseleave', 'pois', () => tooltip.remove());
+    map.on('mouseenter', 'pois', () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', 'pois', () => map.getCanvas().style.cursor = '');
+
+    const linkCoords = geojson.features.flatMap(f => f.geometry.coordinates);
+    const poiCoords = poiGeojson.features.map(f => f.geometry.coordinates);
+    const allCoords = linkCoords.concat(poiCoords);
+    if (allCoords.length > 0) {
+      const bounds = allCoords.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds());
+      map.fitBounds(bounds, { padding: 40, maxZoom: 14 });
     } else {
       document.getElementById('map').insertAdjacentHTML('afterbegin', \`
         <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
                     background:white;padding:1em;border-radius:4px;z-index:999">
-          No ServiceLinks found
+          No ServiceLinks or TopographicPlaces found
         </div>\`);
     }
   });
