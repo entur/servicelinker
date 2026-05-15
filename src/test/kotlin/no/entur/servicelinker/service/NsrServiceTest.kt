@@ -26,6 +26,7 @@ class NsrServiceTest {
                 timeout = 5000,
                 cacheCoordinates = false,
                 maxRetries = 1,
+                perRequestDeadlineMs = 0, // disable; runTest's virtual clock fires this ahead of real I/O
             )
         nsrService = NsrService(properties)
     }
@@ -120,6 +121,7 @@ class NsrServiceTest {
                     baseUrl = "http://localhost:$port",
                     timeout = 5000,
                     cacheCoordinates = true,
+                    perRequestDeadlineMs = 0,
                 )
             val cachingService = NsrService(properties)
 
@@ -178,11 +180,142 @@ class NsrServiceTest {
                     timeout = 100,
                     cacheCoordinates = false,
                     maxRetries = 1,
+                    perRequestDeadlineMs = 0,
                 )
             val timeoutService = NsrService(properties)
 
             val coordinate = timeoutService.getQuayCoordinates("NSR:Quay:timeout")
 
             assertNull(coordinate)
+        }
+
+    @Test
+    fun `should retry on 503 and then succeed`() =
+        runTest {
+            val nsrXml =
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Quay xmlns="http://www.netex.org.uk/netex" id="NSR:Quay:retry" version="1">
+                    <Centroid><Location><Longitude>10.0</Longitude><Latitude>60.0</Latitude></Location></Centroid>
+                </Quay>
+                """.trimIndent()
+            val scenario = "retry-then-succeed"
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3Aretry"))
+                    .inScenario(scenario)
+                    .whenScenarioStateIs(com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED)
+                    .willReturn(aResponse().withStatus(503))
+                    .willSetStateTo("second"),
+            )
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3Aretry"))
+                    .inScenario(scenario)
+                    .whenScenarioStateIs("second")
+                    .willReturn(
+                        aResponse()
+                            .withStatus(200)
+                            .withHeader("Content-Type", "application/xml")
+                            .withBody(nsrXml),
+                    ),
+            )
+
+            val service =
+                NsrService(
+                    NsrProperties(
+                        baseUrl = "http://localhost:$port",
+                        timeout = 5000,
+                        cacheCoordinates = false,
+                        maxRetries = 3,
+                        retryBaseDelayMs = 1,
+                        retryMaxDelayMs = 5,
+                        perRequestDeadlineMs = 0,
+                    ),
+                )
+
+            val coordinate = service.getQuayCoordinates("NSR:Quay:retry")
+
+            assertNotNull(coordinate)
+            assertEquals(BigDecimal("60.0"), coordinate!!.latitude)
+            wireMock.verify(2, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3Aretry")))
+        }
+
+    @Test
+    fun `should not retry on 404`() =
+        runTest {
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3Agone"))
+                    .willReturn(aResponse().withStatus(404)),
+            )
+
+            val service =
+                NsrService(
+                    NsrProperties(
+                        baseUrl = "http://localhost:$port",
+                        timeout = 5000,
+                        cacheCoordinates = false,
+                        maxRetries = 4,
+                        retryBaseDelayMs = 1,
+                        retryMaxDelayMs = 5,
+                        perRequestDeadlineMs = 0,
+                    ),
+                )
+
+            val coordinate = service.getQuayCoordinates("NSR:Quay:gone")
+
+            assertNull(coordinate)
+            wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3Agone")))
+        }
+
+    @Test
+    fun `batch should resolve mix of cached and uncached, dedup quay IDs`() =
+        runTest {
+            val xmlFor = { lon: String, lat: String ->
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Quay xmlns="http://www.netex.org.uk/netex">
+                    <Centroid><Location><Longitude>$lon</Longitude><Latitude>$lat</Latitude></Location></Centroid>
+                </Quay>
+                """.trimIndent()
+            }
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3A1"))
+                    .willReturn(aResponse().withStatus(200).withBody(xmlFor("1.0", "60.0"))),
+            )
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3A2"))
+                    .willReturn(aResponse().withStatus(200).withBody(xmlFor("2.0", "61.0"))),
+            )
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3A3"))
+                    .willReturn(aResponse().withStatus(404)),
+            )
+
+            val service =
+                NsrService(
+                    NsrProperties(
+                        baseUrl = "http://localhost:$port",
+                        timeout = 5000,
+                        cacheCoordinates = true,
+                        maxRetries = 1,
+                        perRequestDeadlineMs = 0,
+                    ),
+                )
+
+            // First call warms cache for Quay:1
+            assertNotNull(service.getQuayCoordinates("NSR:Quay:1"))
+            wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A1")))
+
+            // Batch with duplicate Quay:2 + already-cached Quay:1 + missing Quay:3
+            val results = service.getQuayCoordinates(listOf("NSR:Quay:1", "NSR:Quay:2", "NSR:Quay:2", "NSR:Quay:3"))
+
+            assertEquals(2, results.size)
+            assertNotNull(results["NSR:Quay:1"])
+            assertNotNull(results["NSR:Quay:2"])
+            assertNull(results["NSR:Quay:3"])
+
+            // Quay:1 not refetched (cached); Quay:2 called once despite duplicate; Quay:3 called once
+            wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A1")))
+            wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A2")))
+            wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A3")))
         }
 }

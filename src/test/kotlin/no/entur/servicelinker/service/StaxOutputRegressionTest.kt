@@ -16,6 +16,7 @@ import org.w3c.dom.Document
 import org.w3c.dom.Element
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.math.BigDecimal
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -360,7 +361,12 @@ class StaxOutputRegressionTest {
 
             val mockGcsService = mockk<GcsService>(relaxed = true)
             val mockNsrService = mockk<NsrService>(relaxed = true)
-            coEvery { mockNsrService.getQuayCoordinates(any<String>()) } returns null
+            // Mock returns a coord for every queried quay so the integrity check passes and the
+            // test can focus on its real concern: every output ZIP entry must be parseable XML.
+            val fakeCoord = Coordinate(BigDecimal("60.0"), BigDecimal("10.0"))
+            coEvery {
+                mockNsrService.getQuayCoordinates(any<Collection<String>>())
+            } answers { firstArg<Collection<String>>().associateWith { fakeCoord } }
             val service =
                 ServiceLinkProducerService(
                     mockGcsService,
@@ -695,8 +701,8 @@ class StaxOutputRegressionTest {
 
     @Test
     fun `buildInjectionPlan throws when a JP pair has no service link`() {
-        // Defense-in-depth: callers must run checkJourneyPatternIntegrity first. If they don't,
-        // buildInjectionPlan refuses to emit a JP with fewer SLIJPs than stops-1.
+        // Defense-in-depth: callers should run checkJourneyPatternIntegrity first; if they don't,
+        // buildInjectionPlan refuses to emit a JP with fewer SLIJPs than consecutive stop pairs.
         val ex =
             assertThrows(IllegalStateException::class.java) {
                 netexProcessor.buildInjectionPlan(
@@ -707,12 +713,12 @@ class StaxOutputRegressionTest {
                     declaredStopIds = emptySet(),
                 )
             }
-        assertTrue(ex.message!!.contains("SSP:B_SSP:C"))
-        assertTrue(ex.message!!.contains("TST:JP:1"))
+        assertTrue(ex.message!!.contains("SSP:B_SSP:C"), "Error should name the missing pair")
+        assertTrue(ex.message!!.contains("TST:JP:1"), "Error should name the JP")
     }
 
     @Test
-    fun `buildInjectionPlan produces empty plan when there are no JPs`() {
+    fun `buildInjectionPlan produces empty plan when there are no JPs to process`() {
         val plan =
             netexProcessor.buildInjectionPlan(
                 newServiceLinkData = emptyMap(),
@@ -722,11 +728,11 @@ class StaxOutputRegressionTest {
                 declaredStopIds = emptySet(),
             )
 
-        assertTrue(plan.isEmpty)
+        assertTrue(plan.isEmpty, "Plan should be empty when there are no JPs to process")
     }
 
     @Test
-    fun `checkJourneyPatternIntegrity throws with the missing pairs in its message`() {
+    fun `checkJourneyPatternIntegrity throws with details when a pair is missing`() {
         val ex =
             assertThrows(no.entur.servicelinker.model.IncompleteJourneyPatternException::class.java) {
                 NetexProcessor.checkJourneyPatternIntegrity(

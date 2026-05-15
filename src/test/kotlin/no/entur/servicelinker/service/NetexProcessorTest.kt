@@ -5,6 +5,7 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
+import no.entur.servicelinker.model.IncompleteJourneyPatternException
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.plugins.MetadataExtractor
@@ -195,21 +196,15 @@ class NetexProcessorTest {
         }
 
     @Test
-    fun `over-distance OSRM result fails the integrity check`() =
+    fun `over-distance OSRM result falls back to straight-line ServiceLink`() =
         runTest {
-            // 6000km route exceeds the 5000km sanity limit → pair is silently skipped during
-            // routing → JP is missing a SLIJP → integrity check throws.
+            // 6000km route exceeds the 5000km sanity limit → null route → straight-line SL still
+            // created → JP integrity preserved (one new pair added, no exception).
             mockOsrmWithRoute(osloToBergenCoords, 6_000_000.0, 72000.0)
 
-            val ex =
-                try {
-                    netexProcessor.processNetexFile(getSampleNetexBytes())
-                    null
-                } catch (e: no.entur.servicelinker.model.IncompleteJourneyPatternException) {
-                    e
-                }
-            assertNotNull(ex, "Should throw IncompleteJourneyPatternException")
-            assertEquals(1, ex!!.missingPairs.size)
+            val (_, addedCount) = netexProcessor.processNetexFile(getSampleNetexBytes())
+
+            assertEquals(1, addedCount, "Straight-line fallback should still produce one SL for the new pair")
         }
 
     @Test
@@ -402,21 +397,18 @@ class NetexProcessorTest {
         }
 
     @Test
-    fun `JP with over-distance pair fails the integrity check`() =
+    fun `JP with over-distance pair gets straight-line SLIJP, keeping linksInSequence count consistent`() =
         runTest {
-            // Existing link 1→2 stays. New pair 2→3 gets a 6000km route → filtered out → JP
-            // would be missing a SLIJP → integrity check throws.
+            // Existing link 1→2 stays. New pair 2→3 gets a 6000km route → falls back to straight
+            // line so the JP keeps stops=3 / links=2 instead of failing the file outright.
             mockOsrmWithRoute(osloToBergenCoords, 6_000_000.0, 72000.0)
 
-            val ex =
-                try {
-                    netexProcessor.processNetexFile(getSampleNetexBytes())
-                    null
-                } catch (e: no.entur.servicelinker.model.IncompleteJourneyPatternException) {
-                    e
-                }
-            assertNotNull(ex)
-            assertEquals(1, ex!!.missingPairs.size)
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexBytes())
+
+            assertEquals(1, addedCount, "One new SL should be added (straight line for pair 2→3)")
+            val doc = parseXmlFromBytes(processedXml)
+            val slijp = doc.getElementsByTagName("ServiceLinkInJourneyPattern")
+            assertEquals(2, slijp.length, "JP must end up with stops-1 = 2 SLIJPs")
         }
 
     @Test
@@ -935,41 +927,44 @@ class NetexProcessorTest {
         }
 
     @Test
-    fun `modesFilter not matching line mode skips pair`() =
+    fun `modesFilter not matching line mode produces straight-line SL without calling OSRM`() =
         runTest {
             val xml = buildTwoStopNetex("rail")
             val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), setOf("BUS"))
-            assertEquals(0, addedCount, "BUS filter should skip RAIL journey pattern")
+            assertEquals(1, addedCount, "Out-of-mode pair still gets an SL — straight line — to keep JP integrity")
             coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
         }
 
     @Test
-    fun `empty modesFilter skips all pairs without calling OSRM`() =
+    fun `empty modesFilter produces straight-line SLs and never calls OSRM`() =
         runTest {
             val xml = buildTwoStopNetex("bus")
             val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), emptySet())
-            assertEquals(0, addedCount, "Empty filter should generate no service links")
+            assertEquals(1, addedCount, "Even with empty filter, JP integrity requires the SL")
             coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
         }
 
     @Test
-    fun `modesFilter skips journey pattern with no line transport mode`() =
+    fun `modesFilter and JP without line transport mode falls back to straight line`() =
         runTest {
-            // JP with no RouteRef/LineRef → null mode → excluded by any mode filter
+            // JP with no RouteRef/LineRef → null mode. modesFilter.contains(null) is false →
+            // routed as straight line. Used to silently drop, breaking JP integrity.
             val xml = buildTwoStopNetexNoLine()
             val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), setOf("BUS"))
-            assertEquals(0, addedCount, "JP with null transport mode should be excluded by a mode filter")
+            assertEquals(1, addedCount, "Null-mode JP still produces SL (straight line)")
             coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
         }
 
     @Test
-    fun `modesFilter generates link when line mode matches, skips other journey patterns`() =
+    fun `modesFilter routes via OSRM only for matching modes, straight-lines the rest`() =
         runTest {
             mockOsrmWithRoute(osloToLillestromCoords, 15000.0)
-            // JP1: BUS (stops 1→2 ✓), JP2: RAIL (stops 2→3 ✗)
+            // JP1: BUS (stops 1→2, routed via OSRM), JP2: RAIL (stops 2→3, straight line).
             val xml = buildTwoJourneyPatternNetex("bus", "rail")
             val (_, addedCount) = netexProcessor.processNetexFile(xml.toByteArray(), emptyMap(), setOf("BUS"))
-            assertEquals(1, addedCount, "Only the BUS journey pattern should get a service link")
+            assertEquals(2, addedCount, "Both JPs get SLs — BUS routed, RAIL straight-line")
+            // OSRM is called only for the BUS pair, not for the RAIL pair.
+            coVerify(exactly = 1) { mockOsrmService.calculateRoute(any(), any(), any()) }
         }
 
     /** Two-stop, one-pair JP where mode comes from Line via Route. */

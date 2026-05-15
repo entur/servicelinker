@@ -87,13 +87,18 @@ class PubSubMessageHandler(
             MDC.put("stage", "outgoing/failed")
             logger.error("Failed to process PubSub message: {}", e.message, e)
             try {
+                // GCP PubSub caps attribute values at 1024 bytes
+                // (https://cloud.google.com/pubsub/quotas#resource_limits). The integrity-check
+                // message is multi-line for log readability — take the first line, then truncate.
+                // The full message is preserved in our own logs via the error() call above.
+                val headerMessage = (e.message ?: "Unknown error").substringBefore('\n').take(1024)
                 pubSubTemplate.publish(
                     outboundTopic,
                     "",
                     attributes.toMap() +
                         mapOf(
                             LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_FAILED,
-                            LINKING_ERROR_CODE_HEADER to (e.message ?: "Unknown error"),
+                            LINKING_ERROR_CODE_HEADER to headerMessage,
                         ),
                 )
                 logger.info("Published FAILED status")
@@ -139,9 +144,13 @@ class PubSubMessageHandler(
                     e,
                 )
             } catch (e: Exception) {
-                // Deterministic failure: retrying won't change the outcome, just triples the noise.
+                // future.get wraps task exceptions in ExecutionException, so unwrap once.
                 val rootCause = e.cause ?: e
-                if (rootCause is IncompleteJourneyPatternException) throw rootCause
+                if (rootCause is IncompleteJourneyPatternException) {
+                    // Deterministic failure: same input + same NSR cache → same outcome. Retrying
+                    // would just triple the log noise and the NSR-batch traffic on rollover.
+                    throw rootCause
+                }
                 lastException = e
                 logger.warn("Attempt ${attempt + 1}/$MAX_RETRIES failed for gs://$bucketName/$objectName: ${e.message}")
             } finally {

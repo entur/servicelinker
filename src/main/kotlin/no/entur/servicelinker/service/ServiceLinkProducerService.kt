@@ -174,14 +174,21 @@ class ServiceLinkProducerService(
 
         logger.info("ZIP routing: ${routedPairs.size} new service links routed")
 
-        // Integrity check across all files: every in-scope JP must have a ServiceLink for every
-        // consecutive pair. Throws IncompleteJourneyPatternException otherwise.
-        val inScopeStopSequencesByFile =
-            jpStopSequencesByFile.mapValues { (_, seqs) ->
-                NetexProcessor.filterJpsInScope(seqs, jpModeMapGlobal, modesFilter)
-            }
-        val allInScopeJpStopSequences = inScopeStopSequencesByFile.values.flatMap { it.entries }.associate { it.toPair() }
-        NetexProcessor.checkJourneyPatternIntegrity(allInScopeJpStopSequences, allServiceLinks)
+        // Integrity check: every consecutive pair in every JP must have a resolvable ServiceLink.
+        // Pass the enriched stop set and all assignments so the error message can name quay refs.
+        val allJpStopSequences = jpStopSequencesByFile.values.flatMap { it.entries }.associate { it.toPair() }
+
+        NetexProcessor.warnOnPairModeConflicts(
+            logger,
+            NetexProcessor.detectPairModeConflicts(allJpStopSequences, jpModeMapGlobal),
+        )
+
+        NetexProcessor.checkJourneyPatternIntegrity(
+            allJpStopSequences,
+            allServiceLinks,
+            enrichedStopPoints,
+            allStopAssignments,
+        )
 
         // Assign each ServiceLink to the file that declares its from-stop's ScheduledStopPoint.
         val serviceLinksByFile = mutableMapOf<String, MutableList<Pair<String, RoutedPair>>>()
@@ -220,7 +227,7 @@ class ServiceLinkProducerService(
                             netexProcessor.buildZipInjectionPlan(
                                 serviceLinksForFile,
                                 allServiceLinks,
-                                inScopeStopSequencesByFile[entry.name] ?: emptyMap(),
+                                jpStopSequencesByFile[entry.name] ?: emptyMap(),
                                 existingSlijpByFile[entry.name] ?: emptyMap(),
                                 declaredStopIdsByFile[entry.name] ?: emptySet(),
                             )
@@ -311,11 +318,14 @@ class ServiceLinkProducerService(
         stopVersions: Map<String, String> = emptyMap(),
     ): Map<String, StopPoint> {
         val enriched = stopPoints.toMutableMap()
+
         val toLookup = stopAssignments.filterKeys { it !in enriched }
         if (toLookup.isEmpty()) return enriched
 
         val coordsByQuay = nsrService.getQuayCoordinates(toLookup.values)
+
         var resolved = 0
+        var failed = 0
         for ((stopPointRef, quayRef) in toLookup) {
             val coord = coordsByQuay[quayRef]
             if (coord != null) {
@@ -328,9 +338,19 @@ class ServiceLinkProducerService(
                         version = stopVersions[stopPointRef],
                     )
                 resolved++
+            } else {
+                // Per-stop detail is at DEBUG to avoid drowning the aggregate summary below at INFO.
+                // Affected quay refs are surfaced via the integrity-check error message on failure.
+                logger.debug("Could not resolve coordinates for stop {} via NSR quay {}", stopPointRef, quayRef)
+                failed++
             }
         }
-        logger.info("NSR enrichment: {} resolved, {} failed (of {} stops)", resolved, toLookup.size - resolved, toLookup.size)
+        logger.info(
+            "NSR enrichment: {} stops resolved, {} stops failed (of {} needing lookup)",
+            resolved,
+            failed,
+            toLookup.size,
+        )
         return enriched
     }
 

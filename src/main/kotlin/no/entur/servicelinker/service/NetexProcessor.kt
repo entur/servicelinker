@@ -17,6 +17,7 @@ import no.entur.servicelinker.model.TransportMode
 import no.entur.servicelinker.plugins.MetadataExtractor
 import org.entur.netex.tools.lib.config.FilterConfig
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.entur.netex.tools.lib.NetexProcessor as NetexToolsProcessor
 
@@ -24,6 +25,8 @@ import org.entur.netex.tools.lib.NetexProcessor as NetexToolsProcessor
 class NetexProcessor(
     private val osrmService: OSRMService,
     private val metadataExtractor: MetadataExtractor,
+    @Value("\${servicelinker.max-route-distance-meters:5000000}")
+    private val maxRouteDistanceMeters: Long = MAX_ROUTE_DISTANCE_METERS_DEFAULT,
 ) {
     private val logger = LoggerFactory.getLogger(NetexProcessor::class.java)
 
@@ -70,8 +73,14 @@ class NetexProcessor(
         }
         val addedCount = newServiceLinkData.size
 
-        val inScopeStopSequences = filterJpsInScope(metadata.stopSequences, metadata.jpModeMap, modesFilter)
-        checkJourneyPatternIntegrity(inScopeStopSequences, allServiceLinks)
+        warnOnPairModeConflicts(logger, detectPairModeConflicts(metadata.stopSequences, metadata.jpModeMap))
+
+        checkJourneyPatternIntegrity(
+            metadata.stopSequences,
+            allServiceLinks,
+            externalStopPoints + stopPointsMap,
+            metadata.assignments,
+        )
 
         if (addedCount == 0) {
             logger.info("NeTEx processing completed. No service links to add")
@@ -82,7 +91,7 @@ class NetexProcessor(
             buildInjectionPlan(
                 newServiceLinkData = newServiceLinkData,
                 allServiceLinks = allServiceLinks,
-                jpStopSequences = inScopeStopSequences,
+                jpStopSequences = metadata.stopSequences,
                 existingSlijpEntries = metadata.existingSlijp,
                 declaredStopIds = metadata.stopIdsAndVersions.keys,
             )
@@ -92,7 +101,12 @@ class NetexProcessor(
         return ProcessedDataset(modifiedXml, addedCount)
     }
 
-    /** Route stop pairs via OSRM, applying mode filter and distance/limit constraints. */
+    /**
+     * Route stop pairs via OSRM. Every input pair appears in the result — pairs that can't be
+     * routed (mode not in [modesFilter], OSRM error, or absurd distance) get a null route so
+     * [createServiceLinkData] emits a straight-line ServiceLink. This keeps every JP's
+     * linksInSequence count consistent with its pointsInSequence, regardless of routing outcome.
+     */
     suspend fun routePairs(
         pairs: Map<String, StationPair>,
         modesFilter: Set<String>?,
@@ -102,27 +116,46 @@ class NetexProcessor(
         var remaining = limit
         for ((pairKey, pair) in pairs) {
             if (remaining != null && remaining <= 0) break
-            if (modesFilter != null && !modesFilter.contains(pair.transportMode?.name)) {
-                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: mode ${pair.transportMode} not in filter $modesFilter")
-                continue
-            }
-            val route =
-                try {
-                    osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.transportMode)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id}")
-                    null
-                }
-            if (route != null && route.distance > MAX_ROUTE_DISTANCE_METERS) {
-                logger.debug("Skipping pair ${pair.from.id} → ${pair.to.id}: distance ${route.distance}m exceeds max")
-                continue
-            }
-            result[pairKey] = RoutedPair(pair, route)
+            result[pairKey] = RoutedPair(pair, computeRouteOrFallback(pair, modesFilter))
             if (remaining != null) remaining = (remaining - 1).coerceAtLeast(0)
         }
         return result
+    }
+
+    /** Returns a routed [OSRMRoute] or null for the straight-line fallback (with a reason logged). */
+    private suspend fun computeRouteOrFallback(
+        pair: StationPair,
+        modesFilter: Set<String>?,
+    ): OSRMRoute? {
+        if (modesFilter != null && !modesFilter.contains(pair.transportMode?.name)) {
+            logger.debug(
+                "Pair {} → {}: mode {} not in {} — using straight line",
+                pair.from.id,
+                pair.to.id,
+                pair.transportMode,
+                modesFilter,
+            )
+            return null
+        }
+        val route =
+            try {
+                osrmService.calculateRoute(pair.from.coordinate, pair.to.coordinate, pair.transportMode)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id} — using straight line")
+                return null
+            }
+        if (route != null && route.distance > maxRouteDistanceMeters) {
+            logger.warn(
+                "OSRM returned implausible {}m for {} → {} — using straight line",
+                route.distance,
+                pair.from.id,
+                pair.to.id,
+            )
+            return null
+        }
+        return route
     }
 
     /** Apply a pre-built InjectionPlan to raw XML bytes via netex-tools handlers. */
@@ -222,10 +255,18 @@ class NetexProcessor(
             }
         val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
 
+        // Fall back to haversine when OSRM didn't provide a route — antu's geometry plausibility
+        // checks expect Distance, and a NeTEx ServiceLink without it is structurally complete but
+        // less useful downstream.
+        val distance =
+            route?.distance?.toInt() ?: pair.from.coordinate
+                .haversineDistanceTo(pair.to.coordinate)
+                .toInt()
+
         return ServiceLinkData(
             id = serviceLinkId,
             version = "1",
-            distance = route?.distance?.toInt(),
+            distance = distance,
             projectionId = "$codespace:LinkSequenceProjection:${timestamp}_${fromId}_$toId",
             gmlLineStringId = "lsp_${fromId}_$toId",
             posList = posListString,
@@ -332,45 +373,149 @@ class NetexProcessor(
         const val SINGLE_DOC_NAME = "input.xml"
 
         /**
-         * Restrict to JourneyPatterns whose mode is in [modesFilter]. JPs whose mode is null or
-         * not in the filter are dropped — those pairs aren't generated nor checked. When
-         * [modesFilter] is null, returns the input unchanged.
-         */
-        fun filterJpsInScope(
-            jpStopSequences: Map<String, List<String>>,
-            jpModeMap: Map<String, TransportMode?>,
-            modesFilter: Set<String>?,
-        ): Map<String, List<String>> {
-            if (modesFilter == null) return jpStopSequences
-            return jpStopSequences.filterKeys { jpId ->
-                val mode = jpModeMap[jpId]?.name
-                mode != null && modesFilter.contains(mode)
-            }
-        }
-
-        /**
-         * Throw [IncompleteJourneyPatternException] if any consecutive stop pair in any in-scope
-         * JP has no resolvable ServiceLink — preventing servicelinker from shipping output that
-         * antu's stop-count vs. link-count check would reject anyway.
+         * Verify every consecutive stop pair in every JourneyPattern has a resolvable ServiceLink.
+         * Throws [IncompleteJourneyPatternException] otherwise — preventing servicelinker from
+         * shipping output that antu's stop-count vs. link-count check would reject.
+         *
+         * [stopPoints] and [stopAssignments] are passed in to enrich the error message: the user-
+         * visible failure can then quote the NSR quay refs (so an operator can paste them into
+         * the NSR admin UI) and aggregate by failure cause (missing PSA vs failed NSR lookup).
          */
         fun checkJourneyPatternIntegrity(
             jpStopSequences: Map<String, List<String>>,
             allServiceLinks: Map<String, String>,
+            stopPoints: Map<String, StopPoint> = emptyMap(),
+            stopAssignments: Map<String, String> = emptyMap(),
         ) {
             val missing = mutableListOf<MissingPair>()
+            var totalMissing = 0
             for ((jpId, stopRefIds) in jpStopSequences) {
                 for (i in 0 until stopRefIds.size - 1) {
-                    if (!allServiceLinks.containsKey("${stopRefIds[i]}_${stopRefIds[i + 1]}")) {
-                        missing.add(MissingPair(jpId, stopRefIds[i], stopRefIds[i + 1]))
+                    val fromRef = stopRefIds[i]
+                    val toRef = stopRefIds[i + 1]
+                    if (!allServiceLinks.containsKey("${fromRef}_$toRef")) {
+                        totalMissing++
+                        // Cap collection at HARD_CAP — the message uses totalMissing for the count,
+                        // so we lose only the tail of the sample list, not the headline numbers.
+                        if (missing.size < HARD_CAP_MISSING_PAIRS) {
+                            missing.add(MissingPair(jpId, fromRef, toRef))
+                        }
                     }
                 }
             }
             if (missing.isEmpty()) return
-            val sample = missing.take(5).joinToString("; ") { "${it.jpId}: ${it.fromRef} → ${it.toRef}" }
-            val tail = if (missing.size > 5) " (+${missing.size - 5} more)" else ""
+
             throw IncompleteJourneyPatternException(
-                missing,
-                "${missing.size} consecutive stop pair(s) have no ServiceLink: $sample$tail",
+                missing.take(MAX_REPORTED_MISSING_PAIRS),
+                formatIntegrityError(totalMissing, missing, stopPoints, stopAssignments),
+            )
+        }
+
+        private fun formatIntegrityError(
+            totalMissing: Int,
+            sample: List<MissingPair>,
+            stopPoints: Map<String, StopPoint>,
+            stopAssignments: Map<String, String>,
+        ): String {
+            // `sample` is capped at HARD_CAP_MISSING_PAIRS so we only see a representative subset
+            // — counts and per-JP groupings are over what we sampled. `totalMissing` is the truth.
+            val byJp = sample.groupBy { it.jpId }
+            val distinctStops =
+                buildSet {
+                    for (p in sample) {
+                        add(p.fromRef)
+                        add(p.toRef)
+                    }
+                }
+            val (withPsa, withoutPsa) = distinctStops.partition { it in stopAssignments }
+            val unresolvedQuays =
+                withPsa
+                    .mapNotNull { stopAssignments[it] }
+                    .filter { stopPoints[it]?.coordinate == null }
+                    .toSet()
+
+            val sampleLines =
+                byJp.entries.take(SAMPLE_JPS).joinToString("\n") { (jpId, pairs) ->
+                    val examples =
+                        pairs.take(SAMPLE_PAIRS).joinToString(", ") { p ->
+                            val fromQ = stopAssignments[p.fromRef]?.let { " ($it)" } ?: ""
+                            val toQ = stopAssignments[p.toRef]?.let { " ($it)" } ?: ""
+                            "${p.fromRef}$fromQ → ${p.toRef}$toQ"
+                        }
+                    val extra = if (pairs.size > SAMPLE_PAIRS) " (+${pairs.size - SAMPLE_PAIRS} more)" else ""
+                    "  JP $jpId — ${pairs.size} missing: $examples$extra"
+                }
+            val moreJps = if (byJp.size > SAMPLE_JPS) "\n  ... and ${byJp.size - SAMPLE_JPS} more JP(s)" else ""
+
+            return buildString {
+                append("Cannot produce valid JourneyPatterns: ")
+                append("$totalMissing consecutive stop pair(s) across at least ${byJp.size} JP(s) ")
+                append("have no ServiceLink.\n")
+                if (totalMissing > sample.size) {
+                    append("  (Sampled the first ${sample.size}; stats below are over the sample.)\n")
+                }
+                append("  Distinct stops affected: ${distinctStops.size}")
+                append(" (${withoutPsa.size} without PassengerStopAssignment")
+                append(", ${withPsa.size} with PassengerStopAssignment)\n")
+                if (unresolvedQuays.isNotEmpty()) {
+                    val quaySample = unresolvedQuays.take(SAMPLE_QUAYS).joinToString(", ")
+                    val moreQuays = if (unresolvedQuays.size > SAMPLE_QUAYS) " (+${unresolvedQuays.size - SAMPLE_QUAYS} more)" else ""
+                    append("  Quays with PSA but no resolved coordinate (NSR lookup failed?): $quaySample$moreQuays\n")
+                }
+                append("Sample missing pairs:\n")
+                append(sampleLines)
+                append(moreJps)
+            }
+        }
+
+        private const val SAMPLE_JPS = 3
+        private const val SAMPLE_PAIRS = 3
+        private const val SAMPLE_QUAYS = 10
+
+        // Stop adding to the sampled `missing` list past this size. Bounds the transient memory
+        // cost of formatIntegrityError on pathological inputs (100k missing pairs ≈ 12 MB list +
+        // transient maps/sets); the headline counts use a separate counter so they stay accurate.
+        private const val HARD_CAP_MISSING_PAIRS = 5_000
+
+        // Cap the list carried on the exception so a pathological failure doesn't retain a
+        // multi-MB list across the failure-handling path (logging, PubSub publish, etc.).
+        private const val MAX_REPORTED_MISSING_PAIRS = 1000
+
+        /**
+         * Find consecutive stop pairs that appear in JPs of more than one transport mode.
+         * `routePairs` picks one mode (the JP that introduced the pair) to send to OSRM, so the
+         * resulting geometry is wrong for the other mode's JP. Returns `pairKey → set of modes`.
+         */
+        fun detectPairModeConflicts(
+            sequencesByJp: Map<String, List<String>>,
+            modeByJp: Map<String, TransportMode?>,
+        ): Map<String, Set<String>> {
+            val pairModes = mutableMapOf<String, MutableSet<String>>()
+            for ((jpId, seq) in sequencesByJp) {
+                val mode = modeByJp[jpId]?.name ?: continue
+                for (i in 0 until seq.size - 1) {
+                    pairModes.getOrPut("${seq[i]}_${seq[i + 1]}") { mutableSetOf() }.add(mode)
+                }
+            }
+            return pairModes.filterValues { it.size > 1 }
+        }
+
+        /** Single canonical formatter for the mode-conflict WARN — keep both call sites in sync. */
+        fun warnOnPairModeConflicts(
+            logger: org.slf4j.Logger,
+            conflicts: Map<String, Set<String>>,
+        ) {
+            if (conflicts.isEmpty()) return
+            val sample =
+                conflicts.entries.take(3).joinToString("; ") { (pairKey, modes) ->
+                    "$pairKey [${modes.sorted().joinToString("/")}]"
+                }
+            val more = if (conflicts.size > 3) " (+${conflicts.size - 3} more)" else ""
+            logger.warn(
+                "{} stop pair(s) referenced under multiple transport modes — OSRM geometry will follow the first-seen mode and may be wrong for the others. Sample: {}{}",
+                conflicts.size,
+                sample,
+                more,
             )
         }
 
@@ -390,7 +535,8 @@ class NetexProcessor(
             return parts.first() to (parts.lastOrNull() ?: id)
         }
 
-        const val MAX_ROUTE_DISTANCE_METERS = 5_000_000 // 5000 km — sanity limit
+        /** Default sanity limit (5000 km) — override via `servicelinker.max-route-distance-meters`. */
+        private const val MAX_ROUTE_DISTANCE_METERS_DEFAULT: Long = 5_000_000
 
         /** Matches `gml` when used as an XML namespace prefix — in declarations,
          *  element tags, or namespace-qualified attributes. Single-pass replacement. */
