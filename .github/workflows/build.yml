@@ -10,9 +10,11 @@ concurrency:
 
 jobs:
   lint:
+    name: Lint
     uses: entur/gha-docker/.github/workflows/lint.yml@v1
 
   gradle-build:
+    name: Build
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -36,6 +38,7 @@ jobs:
           overwrite: true
 
   docker-build:
+    name: Docker Build
     needs: [ gradle-build, lint ]
     uses: entur/gha-docker/.github/workflows/build.yml@v1
     with:
@@ -43,6 +46,7 @@ jobs:
       build_artifact_path: build/libs
 
   docker-push:
+    name: Docker Push
     if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     needs: docker-build
     uses: entur/gha-docker/.github/workflows/push.yml@v1
@@ -54,6 +58,7 @@ jobs:
       image_artifact: ${{ needs.docker-build.outputs.image_artifact }}
 
   deploy-dev:
+    name: Dev
     if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     needs: docker-push
     uses: entur/gha-helm/.github/workflows/deploy.yml@v1
@@ -66,6 +71,7 @@ jobs:
     secrets: inherit
 
   approval-tst:
+    name: Staging Approval
     if: ${{ github.ref == 'refs/heads/main' }}
     needs: deploy-dev
     runs-on: ubuntu-latest
@@ -77,6 +83,7 @@ jobs:
         run: echo "Approve TST deployment"
 
   deploy-tst:
+    name: Staging
     if: ${{ github.ref == 'refs/heads/main' }}
     needs: [docker-push, approval-tst]
     uses: entur/gha-helm/.github/workflows/deploy.yml@v1
@@ -89,6 +96,7 @@ jobs:
     secrets: inherit
 
   approval-prd:
+    name: Prod Approval
     if: ${{ github.ref == 'refs/heads/main' }}
     needs: deploy-tst
     runs-on: ubuntu-latest
@@ -100,6 +108,7 @@ jobs:
         run: echo "Approve PRD deployment"
 
   deploy-prd:
+    name: Prod
     if: ${{ github.ref == 'refs/heads/main' }}
     needs: [docker-push, approval-prd]
     uses: entur/gha-helm/.github/workflows/deploy.yml@v1
