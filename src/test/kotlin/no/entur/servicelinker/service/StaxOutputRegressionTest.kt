@@ -360,7 +360,7 @@ class StaxOutputRegressionTest {
 
             val mockGcsService = mockk<GcsService>(relaxed = true)
             val mockNsrService = mockk<NsrService>(relaxed = true)
-            coEvery { mockNsrService.getQuayCoordinates(any()) } returns null
+            coEvery { mockNsrService.getQuayCoordinates(any<String>()) } returns null
             val service =
                 ServiceLinkProducerService(
                     mockGcsService,
@@ -456,8 +456,9 @@ class StaxOutputRegressionTest {
         runTest {
             val mockGcsService = mockk<GcsService>(relaxed = true)
             val mockNsrService = mockk<NsrService>(relaxed = true)
-            coEvery { mockNsrService.getQuayCoordinates("NSR:Quay:1") } returns oslo
-            coEvery { mockNsrService.getQuayCoordinates("NSR:Quay:2") } returns lillestrøm
+            coEvery {
+                mockNsrService.getQuayCoordinates(any<Collection<String>>())
+            } returns mapOf("NSR:Quay:1" to oslo, "NSR:Quay:2" to lillestrøm)
             val service =
                 ServiceLinkProducerService(
                     mockGcsService,
@@ -693,32 +694,49 @@ class StaxOutputRegressionTest {
     }
 
     @Test
-    fun `buildInjectionPlan skips JP pairs with no service link`() {
-        val plan =
-            netexProcessor.buildInjectionPlan(
-                newServiceLinkData = emptyMap(),
-                allServiceLinks = mapOf("SSP:A_SSP:B" to "SL:1"), // only A→B, not B→C
-                jpStopSequences = mapOf("TST:JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
-                existingSlijpEntries = emptyMap(),
-                declaredStopIds = emptySet(),
-            )
-
-        val jpLinks = requireNotNull(plan.journeyPatternLinks["TST:JP:1"])
-        assertEquals(1, jpLinks.size, "Only pair A→B should produce an entry, B→C has no service link")
-        assertEquals("SL:1", jpLinks[0].serviceLinkRef)
+    fun `buildInjectionPlan throws when a JP pair has no service link`() {
+        // Defense-in-depth: callers must run checkJourneyPatternIntegrity first. If they don't,
+        // buildInjectionPlan refuses to emit a JP with fewer SLIJPs than stops-1.
+        val ex =
+            assertThrows(IllegalStateException::class.java) {
+                netexProcessor.buildInjectionPlan(
+                    newServiceLinkData = emptyMap(),
+                    allServiceLinks = mapOf("SSP:A_SSP:B" to "SL:1"), // only A→B, not B→C
+                    jpStopSequences = mapOf("TST:JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
+                    existingSlijpEntries = emptyMap(),
+                    declaredStopIds = emptySet(),
+                )
+            }
+        assertTrue(ex.message!!.contains("SSP:B_SSP:C"))
+        assertTrue(ex.message!!.contains("TST:JP:1"))
     }
 
     @Test
-    fun `buildInjectionPlan produces empty plan when nothing to inject`() {
+    fun `buildInjectionPlan produces empty plan when there are no JPs`() {
         val plan =
             netexProcessor.buildInjectionPlan(
                 newServiceLinkData = emptyMap(),
                 allServiceLinks = emptyMap(),
-                jpStopSequences = mapOf("TST:JP:1" to listOf("SSP:A", "SSP:B")),
+                jpStopSequences = emptyMap(),
                 existingSlijpEntries = emptyMap(),
                 declaredStopIds = emptySet(),
             )
 
-        assertTrue(plan.isEmpty, "Plan should be empty when no service links exist")
+        assertTrue(plan.isEmpty)
+    }
+
+    @Test
+    fun `checkJourneyPatternIntegrity throws with the missing pairs in its message`() {
+        val ex =
+            assertThrows(no.entur.servicelinker.model.IncompleteJourneyPatternException::class.java) {
+                NetexProcessor.checkJourneyPatternIntegrity(
+                    jpStopSequences = mapOf("JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
+                    allServiceLinks = mapOf("SSP:A_SSP:B" to "SL:1"),
+                )
+            }
+        assertEquals(1, ex.missingPairs.size)
+        assertEquals("JP:1", ex.missingPairs[0].jpId)
+        assertEquals("SSP:B", ex.missingPairs[0].fromRef)
+        assertEquals("SSP:C", ex.missingPairs[0].toRef)
     }
 }

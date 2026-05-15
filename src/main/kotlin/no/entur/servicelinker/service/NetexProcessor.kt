@@ -3,7 +3,9 @@ package no.entur.servicelinker.service
 import kotlinx.coroutines.CancellationException
 import no.entur.servicelinker.handlers.InjectionHandlerFactory
 import no.entur.servicelinker.model.ExistingSlijpInfo
+import no.entur.servicelinker.model.IncompleteJourneyPatternException
 import no.entur.servicelinker.model.InjectionPlan
+import no.entur.servicelinker.model.MissingPair
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.ProcessedDataset
 import no.entur.servicelinker.model.RoutedPair
@@ -11,6 +13,7 @@ import no.entur.servicelinker.model.ServiceLinkData
 import no.entur.servicelinker.model.SlijpEntry
 import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
+import no.entur.servicelinker.model.TransportMode
 import no.entur.servicelinker.plugins.MetadataExtractor
 import org.entur.netex.tools.lib.config.FilterConfig
 import org.slf4j.LoggerFactory
@@ -67,6 +70,9 @@ class NetexProcessor(
         }
         val addedCount = newServiceLinkData.size
 
+        val inScopeStopSequences = filterJpsInScope(metadata.stopSequences, metadata.jpModeMap, modesFilter)
+        checkJourneyPatternIntegrity(inScopeStopSequences, allServiceLinks)
+
         if (addedCount == 0) {
             logger.info("NeTEx processing completed. No service links to add")
             return ProcessedDataset(inputBytes, 0)
@@ -76,7 +82,7 @@ class NetexProcessor(
             buildInjectionPlan(
                 newServiceLinkData = newServiceLinkData,
                 allServiceLinks = allServiceLinks,
-                jpStopSequences = metadata.stopSequences,
+                jpStopSequences = inScopeStopSequences,
                 existingSlijpEntries = metadata.existingSlijp,
                 declaredStopIds = metadata.stopIdsAndVersions.keys,
             )
@@ -259,7 +265,7 @@ class NetexProcessor(
                 val fromRef = stopRefIds[i]
                 val toRef = stopRefIds[i + 1]
                 val pairKey = "${fromRef}_$toRef"
-                val serviceLinkId = allServiceLinks[pairKey] ?: continue
+                val serviceLinkId = allServiceLinks[pairKey] ?: error("Missing ServiceLink for pair $pairKey in JP $jpId")
 
                 val existingEntry = existing[serviceLinkId]
                 if (existingEntry != null) {
@@ -324,6 +330,49 @@ class NetexProcessor(
     companion object {
         /** Synthetic document name used when processing a single XML stream via the plugin extractor. */
         const val SINGLE_DOC_NAME = "input.xml"
+
+        /**
+         * Restrict to JourneyPatterns whose mode is in [modesFilter]. JPs whose mode is null or
+         * not in the filter are dropped — those pairs aren't generated nor checked. When
+         * [modesFilter] is null, returns the input unchanged.
+         */
+        fun filterJpsInScope(
+            jpStopSequences: Map<String, List<String>>,
+            jpModeMap: Map<String, TransportMode?>,
+            modesFilter: Set<String>?,
+        ): Map<String, List<String>> {
+            if (modesFilter == null) return jpStopSequences
+            return jpStopSequences.filterKeys { jpId ->
+                val mode = jpModeMap[jpId]?.name
+                mode != null && modesFilter.contains(mode)
+            }
+        }
+
+        /**
+         * Throw [IncompleteJourneyPatternException] if any consecutive stop pair in any in-scope
+         * JP has no resolvable ServiceLink — preventing servicelinker from shipping output that
+         * antu's stop-count vs. link-count check would reject anyway.
+         */
+        fun checkJourneyPatternIntegrity(
+            jpStopSequences: Map<String, List<String>>,
+            allServiceLinks: Map<String, String>,
+        ) {
+            val missing = mutableListOf<MissingPair>()
+            for ((jpId, stopRefIds) in jpStopSequences) {
+                for (i in 0 until stopRefIds.size - 1) {
+                    if (!allServiceLinks.containsKey("${stopRefIds[i]}_${stopRefIds[i + 1]}")) {
+                        missing.add(MissingPair(jpId, stopRefIds[i], stopRefIds[i + 1]))
+                    }
+                }
+            }
+            if (missing.isEmpty()) return
+            val sample = missing.take(5).joinToString("; ") { "${it.jpId}: ${it.fromRef} → ${it.toRef}" }
+            val tail = if (missing.size > 5) " (+${missing.size - 5} more)" else ""
+            throw IncompleteJourneyPatternException(
+                missing,
+                "${missing.size} consecutive stop pair(s) have no ServiceLink: $sample$tail",
+            )
+        }
 
         private val TIMESTAMP_FORMAT: java.time.format.DateTimeFormatter =
             java.time.format.DateTimeFormatter

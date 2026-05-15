@@ -195,14 +195,21 @@ class NetexProcessorTest {
         }
 
     @Test
-    fun `should filter out unreasonably long routes`() =
+    fun `over-distance OSRM result fails the integrity check`() =
         runTest {
-            mockOsrmWithRoute(osloToBergenCoords, 6_000_000.0, 72000.0) // 6000km - should be filtered out
+            // 6000km route exceeds the 5000km sanity limit → pair is silently skipped during
+            // routing → JP is missing a SLIJP → integrity check throws.
+            mockOsrmWithRoute(osloToBergenCoords, 6_000_000.0, 72000.0)
 
-            val inputBytes = getSampleNetexBytes()
-            val (_, addedCount) = netexProcessor.processNetexFile(inputBytes)
-
-            assertEquals(0, addedCount, "Should not add service links for routes over 5000km")
+            val ex =
+                try {
+                    netexProcessor.processNetexFile(getSampleNetexBytes())
+                    null
+                } catch (e: no.entur.servicelinker.model.IncompleteJourneyPatternException) {
+                    e
+                }
+            assertNotNull(ex, "Should throw IncompleteJourneyPatternException")
+            assertEquals(1, ex!!.missingPairs.size)
         }
 
     @Test
@@ -395,30 +402,21 @@ class NetexProcessorTest {
         }
 
     @Test
-    fun `should skip linksInSequence entry when route exceeds max distance`() =
+    fun `JP with over-distance pair fails the integrity check`() =
         runTest {
-            // Existing link 1→2 stays. New pair 2→3 gets a 6000km route → filtered out.
+            // Existing link 1→2 stays. New pair 2→3 gets a 6000km route → filtered out → JP
+            // would be missing a SLIJP → integrity check throws.
             mockOsrmWithRoute(osloToBergenCoords, 6_000_000.0, 72000.0)
 
-            val inputBytes = getSampleNetexBytes()
-            val (processedXml, addedCount) = netexProcessor.processNetexFile(inputBytes)
-
-            assertEquals(0, addedCount)
-
-            val doc = parseXmlFromBytes(processedXml)
-            val slijpElements = doc.getElementsByTagName("ServiceLinkInJourneyPattern")
-
-            // Only the existing 1→2 link should appear in linksInSequence; 2→3 was filtered
-            assertEquals(
-                1,
-                slijpElements.length,
-                "Should only have linksInSequence entry for the existing ServiceLink",
-            )
-            val ref =
-                (slijpElements.item(0) as Element)
-                    .getElementsByTagName("ServiceLinkRef")
-                    .item(0) as Element
-            assertEquals("FIN:ServiceLink:1", ref.getAttribute("ref"))
+            val ex =
+                try {
+                    netexProcessor.processNetexFile(getSampleNetexBytes())
+                    null
+                } catch (e: no.entur.servicelinker.model.IncompleteJourneyPatternException) {
+                    e
+                }
+            assertNotNull(ex)
+            assertEquals(1, ex!!.missingPairs.size)
         }
 
     @Test

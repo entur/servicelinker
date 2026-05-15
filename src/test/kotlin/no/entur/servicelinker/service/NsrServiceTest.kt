@@ -25,6 +25,7 @@ class NsrServiceTest {
                 baseUrl = "http://localhost:$port",
                 timeout = 5000,
                 cacheCoordinates = false,
+                maxRetries = 1,
             )
         nsrService = NsrService(properties)
     }
@@ -68,8 +69,7 @@ class NsrServiceTest {
 
             wireMock.verify(
                 getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A102403"))
-                    .withHeader("ET-Client-Name", equalTo("servicelinker"))
-                    .withHeader("ET-Client-ID", equalTo("servicelinker")),
+                    .withHeader("ET-Client-Name", equalTo("entur-servicelinker")),
             )
         }
 
@@ -177,6 +177,7 @@ class NsrServiceTest {
                     baseUrl = "http://localhost:$port",
                     timeout = 100,
                     cacheCoordinates = false,
+                    maxRetries = 1,
                 )
             val timeoutService = NsrService(properties)
 

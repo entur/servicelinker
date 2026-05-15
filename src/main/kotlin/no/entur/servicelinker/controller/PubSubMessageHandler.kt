@@ -5,6 +5,7 @@ import com.google.cloud.spring.pubsub.support.BasicAcknowledgeablePubsubMessage
 import com.google.cloud.spring.pubsub.support.GcpPubSubHeaders
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.slf4j.MDCContext
+import no.entur.servicelinker.model.IncompleteJourneyPatternException
 import no.entur.servicelinker.service.ServiceLinkProducerService
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
@@ -138,6 +139,9 @@ class PubSubMessageHandler(
                     e,
                 )
             } catch (e: Exception) {
+                // Deterministic failure: retrying won't change the outcome, just triples the noise.
+                val rootCause = e.cause ?: e
+                if (rootCause is IncompleteJourneyPatternException) throw rootCause
                 lastException = e
                 logger.warn("Attempt ${attempt + 1}/$MAX_RETRIES failed for gs://$bucketName/$objectName: ${e.message}")
             } finally {
