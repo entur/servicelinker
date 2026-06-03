@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.integration.annotation.ServiceActivator
 import org.springframework.messaging.Message
 import org.springframework.stereotype.Component
+import java.time.Instant
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -54,7 +55,11 @@ class PubSubMessageHandler(
             pubSubTemplate.publish(
                 outboundTopic,
                 "",
-                attributes.toMap() + mapOf(LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_STARTED),
+                attributes.toMap() +
+                    mapOf(
+                        LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_STARTED,
+                        emitTimeAttribute(),
+                    ),
             )
             logger.info("Published STARTED status")
 
@@ -77,6 +82,7 @@ class PubSubMessageHandler(
                         LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_SUCCEEDED,
                         LINKED_NETEX_FILE_PATH_HEADER to targetFileHandle,
                         "addedServiceLinksCount" to addedCount.toString(),
+                        emitTimeAttribute(),
                     ),
             )
             logger.info("Published SUCCESS status")
@@ -99,6 +105,7 @@ class PubSubMessageHandler(
                         mapOf(
                             LINKING_NETEX_FILE_STATUS_HEADER to LINKING_NETEX_FILE_STATUS_FAILED,
                             LINKING_ERROR_CODE_HEADER to headerMessage,
+                            emitTimeAttribute(),
                         ),
                 )
                 logger.info("Published FAILED status")
@@ -111,6 +118,10 @@ class PubSubMessageHandler(
             MDC.clear()
         }
     }
+
+    // Stamped per call so STARTED and the terminal status carry distinct emit times (they are
+    // separated by the actual processing duration). marduk orders the relayed JobEvents by this.
+    private fun emitTimeAttribute(): Pair<String, String> = LINKING_STATUS_EVENT_TIME_HEADER to Instant.now().toString()
 
     private fun processWithRetry(
         bucketName: String,
@@ -175,6 +186,9 @@ class PubSubMessageHandler(
         const val LINKING_NETEX_FILE_STATUS_FAILED: String = "FAILED"
         const val LINKED_NETEX_FILE_PATH_HEADER: String = "LinkedNetexFilePath"
         const val LINKING_ERROR_CODE_HEADER: String = "LinkingFailureReason"
+        // ISO-8601 instant stamped at emit time so marduk can order STARTED/SUCCESS by when
+        // servicelinker actually emitted them, not by when marduk happened to process them.
+        const val LINKING_STATUS_EVENT_TIME_HEADER: String = "LinkingStatusEventTime"
         const val SERVICE_LINK_MODES_HEADER: String = "ServiceLinkModes"
         const val CORRELATION_ID: String = "RutebankenCorrelationId"
         const val DATASET_REFERENTIAL: String = "EnturDatasetReferential"
