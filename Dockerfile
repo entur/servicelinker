@@ -1,5 +1,8 @@
 FROM bellsoft/liberica-runtime-container:jre-25-slim-musl
 
+# hadolint ignore=DL3018
+RUN apk upgrade --no-cache
+
 WORKDIR /srv
 COPY build/libs/*.jar app.jar
 RUN chown -R 1000:1000 /srv
