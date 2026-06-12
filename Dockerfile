@@ -1,4 +1,4 @@
-FROM bellsoft/liberica-runtime-container:jre-25-slim-musl
+FROM bellsoft/liberica-runtime-container:jre-25-musl
 
 # hadolint ignore=DL3018
 RUN apk upgrade --no-cache
