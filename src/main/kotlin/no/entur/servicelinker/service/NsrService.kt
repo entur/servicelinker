@@ -45,7 +45,7 @@ data class NsrProperties(
     /** Max entries in the in-process coordinate cache (LRU + 24h TTL by default). */
     val cacheMaxSize: Int = 50_000,
     /** Cache entry lifetime. */
-    val cacheTtlHours: Int = 24,
+    val cacheTtlHours: Int = 6,
     /** Bounds the parallel NSR fetches and the Netty pool. Lower if NSR rate-limits the client. */
     val maxConcurrentRequests: Int = 32,
     /** Total attempts per quay (1 = no retry). Each retry waits [retryBaseDelayMs]‥[retryMaxDelayMs]. */
