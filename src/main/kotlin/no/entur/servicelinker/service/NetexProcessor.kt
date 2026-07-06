@@ -428,10 +428,14 @@ class NetexProcessor(
                     }
                 }
             val (withPsa, withoutPsa) = distinctStops.partition { it in stopAssignments }
+            // Order matters: filter by SSP ref, THEN map to quay. `stopPoints` is keyed by SSP ref,
+            // not quay ref, so mapping to quay first would make the filter a no-op that blames every
+            // PSA-backed quay in the sample — even ones that resolved and are implicated only by
+            // neighbouring an unresolved stop. "Unresolved" == absent from the enriched map.
             val unresolvedQuays =
                 withPsa
+                    .filter { it !in stopPoints }
                     .mapNotNull { stopAssignments[it] }
-                    .filter { stopPoints[it]?.coordinate == null }
                     .toSet()
 
             val sampleLines =
@@ -460,7 +464,7 @@ class NetexProcessor(
                 if (unresolvedQuays.isNotEmpty()) {
                     val quaySample = unresolvedQuays.take(SAMPLE_QUAYS).joinToString(", ")
                     val moreQuays = if (unresolvedQuays.size > SAMPLE_QUAYS) " (+${unresolvedQuays.size - SAMPLE_QUAYS} more)" else ""
-                    append("  Quays with PSA but no resolved coordinate (NSR lookup failed?): $quaySample$moreQuays\n")
+                    append("  Quays with PSA but no resolved coordinate (missing from NSR or the lookup failed): $quaySample$moreQuays\n")
                 }
                 append("Sample missing pairs:\n")
                 append(sampleLines)

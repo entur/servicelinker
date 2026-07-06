@@ -5,8 +5,10 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.ExistingSlijpInfo
+import no.entur.servicelinker.model.IncompleteJourneyPatternException
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.model.ServiceLinkData
+import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.plugins.MetadataExtractor
 import no.entur.servicelinker.util.PolylineEncoding
 import org.junit.jupiter.api.Assertions.*
@@ -734,7 +736,7 @@ class StaxOutputRegressionTest {
     @Test
     fun `checkJourneyPatternIntegrity throws with details when a pair is missing`() {
         val ex =
-            assertThrows(no.entur.servicelinker.model.IncompleteJourneyPatternException::class.java) {
+            assertThrows(IncompleteJourneyPatternException::class.java) {
                 NetexProcessor.checkJourneyPatternIntegrity(
                     jpStopSequences = mapOf("JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
                     allServiceLinks = mapOf("SSP:A_SSP:B" to "SL:1"),
@@ -744,5 +746,39 @@ class StaxOutputRegressionTest {
         assertEquals("JP:1", ex.missingPairs[0].jpId)
         assertEquals("SSP:B", ex.missingPairs[0].fromRef)
         assertEquals("SSP:C", ex.missingPairs[0].toRef)
+    }
+
+    @Test
+    fun `integrity error blames only the quay whose NSR coordinate actually failed to resolve`() {
+        // JP A -> B -> C. Only B's NSR lookup failed, so B is absent from the enriched stop map
+        // while A and C resolved. Both pairs (A->B, B->C) are missing because they hinge on B, but
+        // only B's quay should be reported as unresolved — A and C are implicated purely by
+        // adjacency and must not be blamed for a failed NSR lookup they didn't have.
+        val coord = Coordinate(BigDecimal("60.0"), BigDecimal("10.0"))
+        val ex =
+            assertThrows(IncompleteJourneyPatternException::class.java) {
+                NetexProcessor.checkJourneyPatternIntegrity(
+                    jpStopSequences = mapOf("JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
+                    allServiceLinks = emptyMap(),
+                    stopPoints =
+                        mapOf(
+                            "SSP:A" to StopPoint("SSP:A", null, coord, null, null),
+                            "SSP:C" to StopPoint("SSP:C", null, coord, null, null),
+                            // SSP:B absent — its NSR lookup failed
+                        ),
+                    stopAssignments =
+                        mapOf(
+                            "SSP:A" to "NSR:Quay:1",
+                            "SSP:B" to "NSR:Quay:2",
+                            "SSP:C" to "NSR:Quay:3",
+                        ),
+                )
+            }
+        val unresolvedLine =
+            ex.message!!.lineSequence().firstOrNull { it.contains("Quays with PSA") }
+                ?: fail("integrity message should list the quays with PSA but no coordinate")
+        assertTrue(unresolvedLine.contains("NSR:Quay:2"), "The genuinely-unresolved quay must be reported")
+        assertFalse(unresolvedLine.contains("NSR:Quay:1"), "A resolved neighbour must not be reported as failed")
+        assertFalse(unresolvedLine.contains("NSR:Quay:3"), "A resolved neighbour must not be reported as failed")
     }
 }

@@ -24,6 +24,7 @@ import reactor.netty.resources.ConnectionProvider
 import java.io.StringReader
 import java.time.Duration
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.xml.stream.XMLInputFactory
 import javax.xml.stream.XMLStreamConstants
 import kotlin.math.max
@@ -46,10 +47,19 @@ data class NsrProperties(
     val cacheMaxSize: Int = 50_000,
     /** Cache entry lifetime. */
     val cacheTtlHours: Int = 6,
-    /** Bounds the parallel NSR fetches and the Netty pool. Lower if NSR rate-limits the client. */
-    val maxConcurrentRequests: Int = 32,
-    /** Total attempts per quay (1 = no retry). Each retry waits [retryBaseDelayMs]‥[retryMaxDelayMs]. */
-    val maxRetries: Int = 4,
+    /**
+     * Bounds the parallel NSR fetches and the Netty pool. Kept deliberately low: at 32 a single
+     * dataset's ~2k-quay burst drove NSR to rate-limit us (HTTP 429), which exhausted the per-quay
+     * retries and failed the whole dataset over a handful of unresolved stops. Lower further if
+     * 429s persist.
+     */
+    val maxConcurrentRequests: Int = 8,
+    /**
+     * Total attempts per quay (1 = no retry). Each retry waits [retryBaseDelayMs]‥[retryMaxDelayMs].
+     * Sized to outlast a brief NSR rate-limit window rather than give up inside it. The effective
+     * attempt count is also bounded by [perRequestDeadlineMs].
+     */
+    val maxRetries: Int = 6,
     /** Lower bound for the decorrelated-jitter retry delay. */
     val retryBaseDelayMs: Long = 500,
     /** Upper bound for the decorrelated-jitter retry delay; also caps a server-supplied `Retry-After`. */
@@ -59,7 +69,7 @@ data class NsrProperties(
      * (test-only — `kotlinx-coroutines-test`'s `runTest` fires `withTimeout` against virtual time,
      * which would otherwise pre-empt real-time I/O).
      */
-    val perRequestDeadlineMs: Long = 30_000,
+    val perRequestDeadlineMs: Long = 45_000,
 )
 
 @Service
@@ -137,13 +147,16 @@ class NsrService(
             nsrProperties.maxConcurrentRequests,
         )
         val start = System.currentTimeMillis()
+        // Quays that failed transiently then succeeded on retry: a leading indicator that the retry
+        // budget is absorbing NSR rate-limiting, before exhausted retries start failing datasets.
+        val retriedSuccesses = AtomicInteger(0)
         val semaphore = Semaphore(nsrProperties.maxConcurrentRequests)
         coroutineScope {
             toFetch
                 .map { id ->
                     async {
                         semaphore.withPermit {
-                            val coord = fetchWithDeadlineAndRetries(id)
+                            val coord = fetchWithDeadlineAndRetries(id, retriedSuccesses)
                             if (coord != null) {
                                 if (nsrProperties.cacheCoordinates) coordinateCache.put(id, coord)
                                 results[id] = coord
@@ -156,23 +169,28 @@ class NsrService(
         val fetched = results.size - cacheHits
         val failed = toFetch.size - fetched
         logger.info(
-            "NSR batch lookup complete in {}ms: {} fetched, {} failed, {} cached",
+            "NSR batch lookup complete in {}ms: {} fetched ({} after retry), {} failed, {} cached",
             elapsed,
             fetched,
+            retriedSuccesses.get(),
             failed,
             cacheHits,
         )
         return results
     }
 
-    /** Per-quay total deadline guards against one slow quay holding a semaphore permit for ~70s
-     *  (= maxRetries × responseTimeout + retryMaxDelayMs × (maxRetries-1)).
-     *  Set [NsrProperties.perRequestDeadlineMs] to 0 to disable (useful in tests where
+    /** Per-quay total deadline caps the worst-case retry budget
+     *  (maxRetries × responseTimeout + retryMaxDelayMs × (maxRetries-1)) at
+     *  [NsrProperties.perRequestDeadlineMs], so one slow quay can't hold a semaphore permit for the
+     *  whole budget. Set [NsrProperties.perRequestDeadlineMs] to 0 to disable (useful in tests where
      *  `runTest`'s virtual time scheduler fires `withTimeout` ahead of real-time I/O). */
-    private suspend fun fetchWithDeadlineAndRetries(quayId: String): Coordinate? {
-        if (nsrProperties.perRequestDeadlineMs <= 0) return fetchWithRetries(quayId)
+    private suspend fun fetchWithDeadlineAndRetries(
+        quayId: String,
+        retriedSuccesses: AtomicInteger,
+    ): Coordinate? {
+        if (nsrProperties.perRequestDeadlineMs <= 0) return fetchWithRetries(quayId, retriedSuccesses)
         return try {
-            withTimeout(nsrProperties.perRequestDeadlineMs) { fetchWithRetries(quayId) }
+            withTimeout(nsrProperties.perRequestDeadlineMs) { fetchWithRetries(quayId, retriedSuccesses) }
         } catch (e: TimeoutCancellationException) {
             logger.warn(
                 "Failed to get coordinates for quay {}: per-request deadline exceeded ({}ms)",
@@ -206,12 +224,16 @@ class NsrService(
      * Fetch one quay with retries on transient failures (429/5xx/network).
      * Returns null for 404 or after retries are exhausted.
      */
-    private suspend fun fetchWithRetries(quayId: String): Coordinate? {
+    private suspend fun fetchWithRetries(
+        quayId: String,
+        retriedSuccesses: AtomicInteger,
+    ): Coordinate? {
         var prevDelay = 0L
         var lastReason: String? = null
         for (attempt in 0 until nsrProperties.maxRetries) {
             when (val outcome = fetchOnce(quayId)) {
                 is Attempt.Done -> {
+                    if (attempt > 0 && outcome.coord != null) retriedSuccesses.incrementAndGet()
                     return outcome.coord
                 }
 
