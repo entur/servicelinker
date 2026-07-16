@@ -1,6 +1,6 @@
 [versions]
 gradle-versions = "0.54.0"
-kotlin = "2.4.0"
+kotlin = "2.4.10"
 ktlint = "14.2.0"
 logstash-logback-encoder = "9.0"
 mockk = "1.14.9"
