@@ -545,14 +545,14 @@ Terminal 2 is used in step 6 to pull the status message after processing complet
 **Step 2: Upload a test NeTEx file to the input bucket.**
 
 ```bash
-gsutil cp src/test/resources/sample-netex.xml \
+gcloud storage cp src/test/resources/sample-netex.xml \
   gs://marduk-exchange-dev/test/sample-netex.xml
 ```
 
 Verify the upload:
 
 ```bash
-gsutil ls -l gs://marduk-exchange-dev/test/sample-netex.xml
+gcloud storage ls -l gs://marduk-exchange-dev/test/sample-netex.xml
 ```
 
 **Step 3: Publish a message to the inbound topic.**
@@ -582,13 +582,13 @@ If processing fails, the message is acked after max retries. Check logs for erro
 The output file is written to the output bucket at the same object path:
 
 ```bash
-gsutil ls -l gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml
+gcloud storage ls -l gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml
 ```
 
 Download and inspect:
 
 ```bash
-gsutil cp gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml processed.xml
+gcloud storage cp gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml processed.xml
 grep -c "ServiceLink" processed.xml
 ```
 
@@ -615,8 +615,8 @@ The output should show a message with these attributes:
 **Step 7: Clean up test data.**
 
 ```bash
-gsutil rm gs://marduk-exchange-dev/test/sample-netex.xml
-gsutil rm gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml
+gcloud storage rm gs://marduk-exchange-dev/test/sample-netex.xml
+gcloud storage rm gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml
 ```
 
 ---
