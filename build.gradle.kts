@@ -3,7 +3,6 @@ plugins {
     alias(libs.plugins.kotlin.spring)
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.spring.dependency.management)
-    alias(libs.plugins.gradle.versions)
     alias(libs.plugins.ktlint)
 }
 
@@ -121,9 +120,3 @@ tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
     }
 }
 
-// https://github.com/ben-manes/gradle-versions-plugin/issues/968
-tasks.dependencyUpdates {
-    doFirst {
-        gradle.startParameter.isParallelProjectExecutionEnabled = false
-    }
-}
