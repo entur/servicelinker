@@ -629,7 +629,7 @@ gcloud storage rm gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml
 | Test class | What it tests | Docker required |
 |------------|---------------|-----------------|
 | `NetexProcessorTest` | NeTEx XML parsing, ServiceLink generation, distance filtering | No |
-| `OSRMServiceTest` | Per-mode URL routing, caching, WireMock-based OSRM responses | No |
+| `OSRMServiceTest` | Per-mode URL routing (incl. WATER never hitting the ferry instance), caching, WireMock-based OSRM responses | No |
 | `NsrServiceTest` | Quay lookup, caching, retry/backoff, transient-vs-definitive failure classification | No |
 | `PubSubMessageHandlerTest` | Status message contract, retry rules (throttled retried, deterministic not) | No |
 | `ZipHandlingTest` | ZIP archive processing, non-XML preservation, magic-byte detection | No |
@@ -646,15 +646,33 @@ client will fail to connect. For local dev, either use docker-compose (sets the 
 `PUBSUB_EMULATOR_HOST=localhost:8085` with the emulator running.
 
 **OSRM returns null routes:** Check that the OSRM instance for the transport mode is reachable and has loaded the correct network data.
-A `null` route means either the OSRM instance is down, timed out, or the coordinates are outside its loaded area. Routes over 100km
-are also filtered out.
+A `null` route means either the OSRM instance is down, timed out, or the coordinates are outside its loaded area. Routes longer than
+`servicelinker.max-route-distance-meters` (default 5 000 km) are also rejected as implausible.
+
+Every straight-line fallback is counted in `servicelinker_servicelink_straight_line_total{mode,reason,codespace}`, and all but
+`reason=mode-filtered` (DEBUG only) are logged at WARN with the mode. The instance URL appears on the `OSRMService` warning for the
+underlying HTTP failure, not on the fallback line itself, so match the two up by stop ids.
+
+On a 4xx the OSRM response body is logged too, because that is where the useful part is: `NoSegment` means a coordinate is off the
+loaded network (wrong graph, or a bad quay coordinate), `NoRoute` means the graph is disconnected between the two points. A burst of
+`NoSegment` for one mode usually means that mode's instance is serving the wrong graph -- check that the k8s Service endpoints point
+at the pods you expect:
+
+```bash
+kubectl -n osrm get svc,endpoints
+```
+
+`NoRoute` on a WATER or FERRY leg usually is not a wiring problem: there is one shared ferry-profile graph and it only contains mapped
+OSM ferry ways. See the OSRM architecture reference in `AGENTS.md`.
 
 **Dataset FAILED with `IncompleteJourneyPatternException`:** Consecutive stop pairs in a JourneyPattern had no ServiceLink, which is
 almost always unresolved stop coordinates. The error message separates the two causes:
 
 - *Quays absent from NSR* -- the operator's data references stops that don't exist. Deterministic, not retried; the operator has to fix it.
-- *Transient NSR failures (429/5xx/timeout)* -- the message says `this run is retryable` and the dataset is retried automatically with a
-  30s/60s backoff. Watch `servicelinker_nsr_throttled_total` and `servicelinker_nsr_lookup_failed_total{reason}`.
+- *Transient NSR failures (429/408/5xx/401/403/timeout)* -- the message says `this run is retryable` and the dataset is retried
+  automatically with a 30s/60s backoff. Watch `servicelinker_nsr_throttled_total` and `servicelinker_nsr_lookup_failed_total{reason}`.
+  `reason=auth` means NSR rejected us outright (quota exhausted, or the `entur-servicelinker` ET-Client-Name is no longer registered) --
+  no amount of retrying fixes that one.
 
 Sustained 429s mean our own burst is the problem: marduk starts several codespaces within seconds, and `nsr.max-concurrent-requests`
 is per pod, so the cluster-wide ceiling is that times the replica count. Lower it (`NSR_MAX_CONCURRENT_REQUESTS`), stagger the
@@ -665,8 +683,10 @@ codespace kickoff in marduk, or ask for a quota bump on the `entur-servicelinker
 | Metric | Meaning |
 |--------|---------|
 | `servicelinker_nsr_throttled_total` | NSR answered 429 |
-| `servicelinker_nsr_lookup_failed_total{reason}` | Quay unresolved: `absent`, `exhausted`, `deadline`, `pool`, `aborted` |
-| `servicelinker_dataset_outcome_total{status}` | `success`, `failed`, `retried` |
+| `servicelinker_nsr_lookup_failed_total{reason}` | Quay unresolved: `absent`, `exhausted`, `deadline`, `pool`, `auth`, `parse`, `aborted` |
+| `servicelinker_servicelink_straight_line_total{mode,reason}` | ServiceLink emitted as a straight line instead of a routed geometry |
+| `servicelinker_dataset_outcome_total{status}` | Terminal, one per dataset: `success`, `failed` |
+| `servicelinker_dataset_retry_total` | A processing attempt that will be retried (kept out of the outcome metric so it stays a partition) |
 
 **ZIP processing produces empty output:** Ensure the input ZIP contains `.xml` files (case-insensitive). Non-XML files are passed
 through unchanged. Empty ZIPs produce empty output ZIPs.

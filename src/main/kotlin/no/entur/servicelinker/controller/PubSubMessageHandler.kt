@@ -184,7 +184,7 @@ class PubSubMessageHandler(
                 // the concurrent datasets that caused the burst have drained.
                 val base = if (nsrThrottled) throttledRetryDelayMs else RETRY_DELAY_MS
                 logger.info("Retrying in {}ms (nsrThrottled={})", base * (attempt + 1), nsrThrottled)
-                meters.datasetOutcome("retried")
+                meters.datasetRetry()
                 Thread.sleep(base * (attempt + 1))
             }
         }

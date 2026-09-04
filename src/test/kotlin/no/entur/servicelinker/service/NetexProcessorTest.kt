@@ -1,5 +1,6 @@
 package no.entur.servicelinker.service
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -33,7 +34,7 @@ class NetexProcessorTest {
     @BeforeEach
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor(), ServicelinkerMetrics(SimpleMeterRegistry()))
     }
 
     private fun getSampleNetexBytes(): ByteArray =

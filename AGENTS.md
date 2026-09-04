@@ -123,6 +123,20 @@ OSRM instances live in k8s namespace `osrm` (context: `prd`/`tst`/`dev`):
 | `osrm-rail` | `rail.lua` | RAIL, TRAM, METRO |
 | `osrm-water` | `ferry.lua` | WATER, FERRY |
 
+There is one water/ferry graph, serving both WATER and FERRY. The k8s naming is confusing but the
+wiring is intentional: `Service/osrm-water` selects `app: osrm-ferry`, and `Deployment/osrm-water`
+has no Service at all. Verify with `kubectl -n osrm get svc osrm-water -o jsonpath='{.spec.selector}'`
+before concluding anything is mis-wired.
+
+`ferry.lua` only routes along mapped OSM ferry ways (`route=ferry`), so an open-coast hop with no
+such way has no route: OSRM answers 400 `NoRoute` and servicelinker falls back to a straight line.
+September 2026, NOR-WAY reported straight-line geometry and `hur` logged 400s on Ornes-Nesna,
+Nesna-Sandnessjoen, Geiranger-Alesund and Geiranger-Sunnmore. Probing both water deployments
+directly (2026-09-04) gave `NoRoute` on all four and a normal route on Moss-Horten, a mapped ferry
+crossing, so the graph is reachable and correct -- those particular connections just are not in it.
+That makes it an OSM data or profile question for team-ror in `entur/osrm-backend-docker`, not a
+routing or servicelinker bug.
+
 Data pipeline (automated):
 1. `osrm-monitor-osm-data` cronjob checks `gs://ror-osmdata-prd/osm-data/merged-latest.osm.pbf` every 15 min for MD5 changes
 2. On change, triggers per-profile rebuild jobs: download PBF → `osrm-extract -p /opt/{profile}.lua` → `osrm-contract` → upload to `gs://ror-osrm-internal-prd/v6/osrm-{profile}/`

@@ -25,6 +25,7 @@ import org.entur.netex.tools.lib.NetexProcessor as NetexToolsProcessor
 class NetexProcessor(
     private val osrmService: OSRMService,
     private val metadataExtractor: MetadataExtractor,
+    private val meters: ServicelinkerMetrics,
     @Value("\${servicelinker.max-route-distance-meters:5000000}")
     private val maxRouteDistanceMeters: Long = MAX_ROUTE_DISTANCE_METERS_DEFAULT,
 ) {
@@ -129,7 +130,8 @@ class NetexProcessor(
         pair: StationPair,
         modesFilter: Set<String>?,
     ): OSRMRoute? {
-        if (modesFilter != null && !modesFilter.contains(pair.transportMode?.name)) {
+        val mode = pair.transportMode?.name
+        if (modesFilter != null && !modesFilter.contains(mode)) {
             logger.debug(
                 "Pair {} → {}: mode {} not in {} — using straight line",
                 pair.from.id,
@@ -137,6 +139,7 @@ class NetexProcessor(
                 pair.transportMode,
                 modesFilter,
             )
+            meters.straightLineFallback(mode, "mode-filtered")
             return null
         }
         val route =
@@ -146,15 +149,30 @@ class NetexProcessor(
                 throw e
             } catch (_: Exception) {
                 logger.warn("OSRM route failed for ${pair.from.id} to ${pair.to.id} — using straight line")
+                meters.straightLineFallback(mode, "osrm-error")
                 return null
             }
-        if (route != null && route.distance > maxRouteDistanceMeters) {
+        // calculateRoute swallows its own HTTP failures and returns null, so this is the only place
+        // a routing failure becomes visible. Warn: silently drawn straight lines are how the
+        // September 2026 hur geometry reached NOR-WAY before it reached us.
+        if (route == null) {
+            logger.warn(
+                "No OSRM route for {} → {} (mode {}) — using straight line",
+                pair.from.id,
+                pair.to.id,
+                mode,
+            )
+            meters.straightLineFallback(mode, "no-route")
+            return null
+        }
+        if (route.distance > maxRouteDistanceMeters) {
             logger.warn(
                 "OSRM returned implausible {}m for {} → {} — using straight line",
                 route.distance,
                 pair.from.id,
                 pair.to.id,
             )
+            meters.straightLineFallback(mode, "implausible-distance")
             return null
         }
         return route
@@ -390,14 +408,26 @@ class NetexProcessor(
             stopAssignments: Map<String, String> = emptyMap(),
             transientlyUnresolvedQuays: Set<String> = emptySet(),
         ) {
+            // Same predicate as `unresolvedQuays`, for one stop ref: PSA-backed, no coordinate,
+            // and the quay is one NSR failed transiently on.
+            val blamesThrottling = { stopRef: String ->
+                stopRef !in stopPoints && stopAssignments[stopRef]?.let { it in transientlyUnresolvedQuays } == true
+            }
+
             val missing = mutableListOf<MissingPair>()
             var totalMissing = 0
+            // Evaluated over every missing pair, not over the capped sample: a dataset with more
+            // than HARD_CAP_MISSING_PAIRS misses can have all its throttled pairs in the tail.
+            var throttledPairFound = false
             for ((jpId, stopRefIds) in jpStopSequences) {
                 for (i in 0 until stopRefIds.size - 1) {
                     val fromRef = stopRefIds[i]
                     val toRef = stopRefIds[i + 1]
                     if (!allServiceLinks.containsKey("${fromRef}_$toRef")) {
                         totalMissing++
+                        if (!throttledPairFound) {
+                            throttledPairFound = blamesThrottling(fromRef) || blamesThrottling(toRef)
+                        }
                         // Cap collection at HARD_CAP — the message uses totalMissing for the count,
                         // so we lose only the tail of the sample list, not the headline numbers.
                         if (missing.size < HARD_CAP_MISSING_PAIRS) {
@@ -413,7 +443,7 @@ class NetexProcessor(
             throw IncompleteJourneyPatternException(
                 missing.take(MAX_REPORTED_MISSING_PAIRS),
                 formatIntegrityError(totalMissing, missing, stopPoints, stopAssignments, unresolvedQuays, throttled),
-                retryable = throttled.isNotEmpty(),
+                retryable = throttledPairFound,
             )
         }
 

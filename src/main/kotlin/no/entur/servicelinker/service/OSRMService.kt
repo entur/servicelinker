@@ -2,6 +2,7 @@ package no.entur.servicelinker.service
 
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
+import kotlinx.coroutines.CancellationException
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.OSRMResponse
 import no.entur.servicelinker.model.OSRMRoute
@@ -11,6 +12,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.WebClientResponseException
 import org.springframework.web.reactive.function.client.awaitBody
 import reactor.netty.http.client.HttpClient
 import java.time.Duration
@@ -90,8 +92,8 @@ class OSRMService(
             }
         }
 
+        val baseUrl = getBaseUrl(transportMode)
         return try {
-            val baseUrl = getBaseUrl(transportMode)
             val webClient = getWebClient(baseUrl)
             val coordinates = "$from;$to"
 
@@ -116,8 +118,27 @@ class OSRMService(
             }
 
             route
+        } catch (e: CancellationException) {
+            // Kotlin's CancellationException extends IllegalStateException, so the catch-all below
+            // would swallow it and report a cancelled run as "no route" for every remaining pair.
+            throw e
+        } catch (e: WebClientResponseException) {
+            // OSRM puts the interesting part in the body, not the status: `NoSegment` means a
+            // coordinate is off the loaded network (wrong graph, or a bad quay coordinate),
+            // `NoRoute` means the graph is disconnected between the two points. Without the body
+            // a 400 is indistinguishable between the two.
+            logger.warn(
+                "OSRM {} for {} → {} (mode: {}, instance: {}): {}",
+                e.statusCode,
+                from,
+                to,
+                modeKey,
+                baseUrl,
+                e.responseBodyAsString.take(MAX_LOGGED_ERROR_BODY).ifBlank { e.message },
+            )
+            null
         } catch (e: Exception) {
-            logger.warn("Failed to calculate route from $from to $to (mode: $modeKey): ${e.message}")
+            logger.warn("Failed to calculate route from $from to $to (mode: $modeKey, instance: $baseUrl): ${e.message}")
             null
         }
     }
@@ -131,5 +152,6 @@ class OSRMService(
 
     companion object {
         const val SIMPLIFIED_THRESHOLD_METERS = 30_000.0
+        const val MAX_LOGGED_ERROR_BODY = 500
     }
 }

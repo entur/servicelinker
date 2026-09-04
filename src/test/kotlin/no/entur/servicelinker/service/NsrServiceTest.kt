@@ -3,22 +3,33 @@ package no.entur.servicelinker.service
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock.*
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
+import com.sun.net.httpserver.HttpServer
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
+import java.net.InetSocketAddress
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 class NsrServiceTest {
     private lateinit var nsrService: NsrService
     private lateinit var wireMock: WireMockServer
-    private val port = 8091
+    private val meters = ServicelinkerMetrics(SimpleMeterRegistry())
+    private var port = 0
 
     @BeforeEach
     fun setUp() {
-        wireMock = WireMockServer(WireMockConfiguration.options().port(port))
+        wireMock = WireMockServer(WireMockConfiguration.options().dynamicPort())
         wireMock.start()
+        port = wireMock.port()
 
         val properties =
             NsrProperties(
@@ -28,7 +39,7 @@ class NsrServiceTest {
                 maxRetries = 1,
                 perRequestDeadlineMs = 0, // disable; runTest's virtual clock fires this ahead of real I/O
             )
-        nsrService = NsrService(properties)
+        nsrService = NsrService(properties, meters)
     }
 
     @AfterEach
@@ -123,7 +134,7 @@ class NsrServiceTest {
                     cacheCoordinates = true,
                     perRequestDeadlineMs = 0,
                 )
-            val cachingService = NsrService(properties)
+            val cachingService = NsrService(properties, meters)
 
             val nsrXml =
                 """
@@ -182,7 +193,7 @@ class NsrServiceTest {
                     maxRetries = 1,
                     perRequestDeadlineMs = 0,
                 )
-            val timeoutService = NsrService(properties)
+            val timeoutService = NsrService(properties, meters)
 
             val coordinate = timeoutService.getQuayCoordinates("NSR:Quay:timeout")
 
@@ -230,6 +241,7 @@ class NsrServiceTest {
                         retryMaxDelayMs = 5,
                         perRequestDeadlineMs = 0,
                     ),
+                    meters,
                 )
 
             val coordinate = service.getQuayCoordinates("NSR:Quay:retry")
@@ -258,6 +270,7 @@ class NsrServiceTest {
                         retryMaxDelayMs = 5,
                         perRequestDeadlineMs = 0,
                     ),
+                    meters,
                 )
 
             val coordinate = service.getQuayCoordinates("NSR:Quay:gone")
@@ -299,6 +312,7 @@ class NsrServiceTest {
                         maxRetries = 1,
                         perRequestDeadlineMs = 0,
                     ),
+                    meters,
                 )
 
             // First call warms cache for Quay:1
@@ -342,6 +356,7 @@ class NsrServiceTest {
                         retryMaxDelayMs = 5,
                         perRequestDeadlineMs = 0,
                     ),
+                    meters,
                 )
 
             val result = service.lookupQuayCoordinates(listOf("NSR:Quay:throttled", "NSR:Quay:gone"))
@@ -349,4 +364,98 @@ class NsrServiceTest {
             assertTrue(result.coordinates.isEmpty())
             assertEquals(setOf("NSR:Quay:throttled"), result.transientFailures)
         }
+
+    @Test
+    fun `treats an unparseable 200 as transient, not as an absent quay`() =
+        runTest {
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3Atruncated"))
+                    .willReturn(aResponse().withStatus(200).withBody("<Quay><Centroid>")),
+            )
+
+            val result = nsrService.lookupQuayCoordinates(listOf("NSR:Quay:truncated"))
+
+            assertEquals(setOf("NSR:Quay:truncated"), result.transientFailures)
+        }
+
+    /**
+     * The semaphore is process-wide, so two overlapping batches share the budget. Counting inside
+     * the handler (rather than timing the batches) keeps this deterministic, and one quay is made
+     * to retry so the permit release/reacquire around the backoff is covered too.
+     */
+    @Test
+    fun `bounds in-flight requests across overlapping batches, including over retries`() =
+        runBlocking {
+            val inFlight = AtomicInteger()
+            val peak = AtomicInteger()
+            val hits = ConcurrentHashMap<String, Int>()
+            val server = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+            server.executor = Executors.newFixedThreadPool(8)
+            server.createContext("/quays") { exchange ->
+                peak.accumulateAndGet(inFlight.incrementAndGet(), ::maxOf)
+                try {
+                    val path = exchange.requestURI.path
+                    val attempt = hits.merge(path, 1, Int::plus)
+                    // First hit on quay 1 fails transiently, forcing a retry with backoff.
+                    val body = if (path.endsWith("1") && attempt == 1) null else QUAY_XML.toByteArray()
+                    Thread.sleep(50)
+                    exchange.sendResponseHeaders(if (body == null) 503 else 200, body?.size?.toLong() ?: -1L)
+                    body?.let { exchange.responseBody.use { out -> out.write(it) } }
+                } finally {
+                    inFlight.decrementAndGet()
+                    exchange.close()
+                }
+            }
+            server.start()
+            try {
+                val service =
+                    NsrService(
+                        NsrProperties(
+                            baseUrl = "http://localhost:${server.address.port}",
+                            timeout = 5000,
+                            cacheCoordinates = false,
+                            maxConcurrentRequests = 2,
+                            maxRetries = 3,
+                            retryBaseDelayMs = 1,
+                            retryMaxDelayMs = 5,
+                            perRequestDeadlineMs = 0,
+                        ),
+                        meters,
+                    )
+                val ids = (1..6).map { "NSR:Quay:$it" }
+                coroutineScope {
+                    launch { service.lookupQuayCoordinates(ids.take(3)) }
+                    launch { service.lookupQuayCoordinates(ids.drop(3)) }
+                }
+
+                assertEquals(2, peak.get(), "Two batches must share the process-wide concurrency budget")
+                assertEquals(7, hits.values.sum(), "6 quays plus the one 503 retry")
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `treats 403 as transient without retrying it`() =
+        runTest {
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3Aforbidden"))
+                    .willReturn(aResponse().withStatus(403)),
+            )
+
+            val result = nsrService.lookupQuayCoordinates(listOf("NSR:Quay:forbidden"))
+
+            assertEquals(setOf("NSR:Quay:forbidden"), result.transientFailures)
+            wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3Aforbidden")))
+        }
+
+    private companion object {
+        val QUAY_XML =
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Quay xmlns="http://www.netex.org.uk/netex">
+                <Centroid><Location><Longitude>10.0</Longitude><Latitude>60.0</Latitude></Location></Centroid>
+            </Quay>
+            """.trimIndent()
+    }
 }
