@@ -367,8 +367,8 @@ class StaxOutputRegressionTest {
             // test can focus on its real concern: every output ZIP entry must be parseable XML.
             val fakeCoord = Coordinate(BigDecimal("60.0"), BigDecimal("10.0"))
             coEvery {
-                mockNsrService.getQuayCoordinates(any<Collection<String>>())
-            } answers { firstArg<Collection<String>>().associateWith { fakeCoord } }
+                mockNsrService.lookupQuayCoordinates(any<Collection<String>>())
+            } answers { NsrLookupResult(firstArg<Collection<String>>().associateWith { fakeCoord }, emptySet()) }
             val service =
                 ServiceLinkProducerService(
                     mockGcsService,
@@ -465,8 +465,8 @@ class StaxOutputRegressionTest {
             val mockGcsService = mockk<GcsService>(relaxed = true)
             val mockNsrService = mockk<NsrService>(relaxed = true)
             coEvery {
-                mockNsrService.getQuayCoordinates(any<Collection<String>>())
-            } returns mapOf("NSR:Quay:1" to oslo, "NSR:Quay:2" to lillestrøm)
+                mockNsrService.lookupQuayCoordinates(any<Collection<String>>())
+            } returns NsrLookupResult(mapOf("NSR:Quay:1" to oslo, "NSR:Quay:2" to lillestrøm), emptySet())
             val service =
                 ServiceLinkProducerService(
                     mockGcsService,

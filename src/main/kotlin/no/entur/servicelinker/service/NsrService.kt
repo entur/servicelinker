@@ -2,6 +2,7 @@ package no.entur.servicelinker.service
 
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -48,12 +49,17 @@ data class NsrProperties(
     /** Cache entry lifetime. */
     val cacheTtlHours: Int = 6,
     /**
-     * Bounds the parallel NSR fetches and the Netty pool. Kept deliberately low: at 32 a single
-     * dataset's ~2k-quay burst drove NSR to rate-limit us (HTTP 429), which exhausted the per-quay
-     * retries and failed the whole dataset over a handful of unresolved stops. Lower further if
-     * 429s persist.
+     * Bounds the parallel NSR fetches and the Netty pool *process-wide*, not per batch: marduk
+     * kicks several codespaces off within seconds of each other, so a per-batch bound multiplied
+     * by the number of datasets in flight. That burst drove NSR to rate-limit us (HTTP 429), which
+     * exhausted the per-quay retries and failed the whole dataset over a handful of unresolved
+     * stops. Lower further if 429s persist (note it is still per pod, so the cluster-wide ceiling
+     * is this times the replica count).
+     *
+     * 4 x 2 replicas = 8 in flight cluster-wide, which is the level a lone dataset ran at cleanly
+     * (vyx: 1783 quays in 6.7s, zero failures) before the September 2026 nwy failure.
      */
-    val maxConcurrentRequests: Int = 8,
+    val maxConcurrentRequests: Int = 4,
     /**
      * Total attempts per quay (1 = no retry). Each retry waits [retryBaseDelayMs]‥[retryMaxDelayMs].
      * Sized to outlast a brief NSR rate-limit window rather than give up inside it. The effective
@@ -72,11 +78,24 @@ data class NsrProperties(
     val perRequestDeadlineMs: Long = 45_000,
 )
 
+/**
+ * Coordinates resolved for a batch, plus the quays whose lookup failed in a way that a later run
+ * could plausibly succeed at (429/5xx/network/deadline) as opposed to a definitive negative (404).
+ */
+data class NsrLookupResult(
+    val coordinates: Map<String, Coordinate>,
+    val transientFailures: Set<String>,
+)
+
 @Service
 class NsrService(
     private val nsrProperties: NsrProperties,
+    private val meters: ServicelinkerMetrics = ServicelinkerMetrics(SimpleMeterRegistry()),
 ) {
     private val logger = LoggerFactory.getLogger(NsrService::class.java)
+
+    /** Process-wide, not per batch — see [NsrProperties.maxConcurrentRequests]. */
+    private val semaphore = Semaphore(nsrProperties.maxConcurrentRequests)
 
     private val coordinateCache: Cache<String, Coordinate> =
         Caffeine
@@ -118,14 +137,19 @@ class NsrService(
     /** Single-quay convenience wrapper. */
     suspend fun getQuayCoordinates(quayId: String): Coordinate? = getQuayCoordinates(listOf(quayId))[quayId]
 
+    /** Coordinates only — use [lookupQuayCoordinates] when the failure cause matters. */
+    suspend fun getQuayCoordinates(quayIds: Collection<String>): Map<String, Coordinate> =
+        lookupQuayCoordinates(quayIds).coordinates
+
     /**
-     * Fetch coordinates for many quays in parallel with bounded concurrency. Returns a map of
-     * quay IDs that resolved successfully — IDs absent from the result either don't exist in NSR
-     * (404) or failed after retries.
+     * Fetch coordinates for many quays in parallel with bounded concurrency. Quays absent from
+     * [NsrLookupResult.coordinates] either don't exist in NSR (404) or failed after retries;
+     * [NsrLookupResult.transientFailures] names the latter so the caller can decide to retry.
      */
-    suspend fun getQuayCoordinates(quayIds: Collection<String>): Map<String, Coordinate> {
-        if (quayIds.isEmpty()) return emptyMap()
+    suspend fun lookupQuayCoordinates(quayIds: Collection<String>): NsrLookupResult {
+        if (quayIds.isEmpty()) return NsrLookupResult(emptyMap(), emptySet())
         val results = java.util.concurrent.ConcurrentHashMap<String, Coordinate>()
+        val transient = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         val toFetch = mutableListOf<String>()
 
         for (id in quayIds.distinct()) {
@@ -137,7 +161,7 @@ class NsrService(
             }
         }
         val cacheHits = results.size
-        if (toFetch.isEmpty()) return results
+        if (toFetch.isEmpty()) return NsrLookupResult(results, emptySet())
 
         logger.info(
             "NSR batch lookup: {} unique quays ({} cache hits, {} to fetch, concurrency={})",
@@ -150,16 +174,19 @@ class NsrService(
         // Quays that failed transiently then succeeded on retry: a leading indicator that the retry
         // budget is absorbing NSR rate-limiting, before exhausted retries start failing datasets.
         val retriedSuccesses = AtomicInteger(0)
-        val semaphore = Semaphore(nsrProperties.maxConcurrentRequests)
         coroutineScope {
             toFetch
                 .map { id ->
                     async {
                         semaphore.withPermit {
-                            val coord = fetchWithDeadlineAndRetries(id, retriedSuccesses)
-                            if (coord != null) {
-                                if (nsrProperties.cacheCoordinates) coordinateCache.put(id, coord)
-                                results[id] = coord
+                            when (val outcome = fetchWithDeadlineAndRetries(id, retriedSuccesses)) {
+                                is QuayResult.Resolved -> {
+                                    if (nsrProperties.cacheCoordinates) coordinateCache.put(id, outcome.coord)
+                                    results[id] = outcome.coord
+                                }
+
+                                is QuayResult.Absent -> Unit
+                                is QuayResult.Transient -> transient.add(id)
                             }
                         }
                     }
@@ -169,14 +196,15 @@ class NsrService(
         val fetched = results.size - cacheHits
         val failed = toFetch.size - fetched
         logger.info(
-            "NSR batch lookup complete in {}ms: {} fetched ({} after retry), {} failed, {} cached",
+            "NSR batch lookup complete in {}ms: {} fetched ({} after retry), {} failed ({} transient), {} cached",
             elapsed,
             fetched,
             retriedSuccesses.get(),
             failed,
+            transient.size,
             cacheHits,
         )
-        return results
+        return NsrLookupResult(results, transient.toSet())
     }
 
     /** Per-quay total deadline caps the worst-case retry budget
@@ -187,7 +215,7 @@ class NsrService(
     private suspend fun fetchWithDeadlineAndRetries(
         quayId: String,
         retriedSuccesses: AtomicInteger,
-    ): Coordinate? {
+    ): QuayResult {
         if (nsrProperties.perRequestDeadlineMs <= 0) return fetchWithRetries(quayId, retriedSuccesses)
         return try {
             withTimeout(nsrProperties.perRequestDeadlineMs) { fetchWithRetries(quayId, retriedSuccesses) }
@@ -197,8 +225,24 @@ class NsrService(
                 quayId,
                 nsrProperties.perRequestDeadlineMs,
             )
-            null
+            meters.nsrLookupFailed("deadline")
+            QuayResult.Transient("per-request deadline exceeded")
         }
+    }
+
+    /** Terminal per-quay outcome, from the caller's point of view. */
+    private sealed interface QuayResult {
+        data class Resolved(
+            val coord: Coordinate,
+        ) : QuayResult
+
+        /** Definitive negative: 404, an unparseable body, or a status we won't retry. */
+        data object Absent : QuayResult
+
+        /** Gave up while the failure still looked transient — worth trying again later. */
+        data class Transient(
+            val reason: String,
+        ) : QuayResult
     }
 
     /** Outcome of a single HTTP attempt — classified so `fetchWithRetries` can stay flat. */
@@ -214,9 +258,14 @@ class NsrService(
             val delayHintMs: Long?,
         ) : Attempt()
 
-        /** Permanent or non-retryable for this client — stop now. */
+        /**
+         * Stop now. [transient] separates load-induced aborts (pool exhaustion — retrying in the
+         * same batch only makes it worse, but a later run would likely succeed) from permanent
+         * ones (4xx we won't retry).
+         */
         data class Abort(
             val reason: String,
+            val transient: Boolean = false,
         ) : Attempt()
     }
 
@@ -227,19 +276,21 @@ class NsrService(
     private suspend fun fetchWithRetries(
         quayId: String,
         retriedSuccesses: AtomicInteger,
-    ): Coordinate? {
+    ): QuayResult {
         var prevDelay = 0L
         var lastReason: String? = null
         for (attempt in 0 until nsrProperties.maxRetries) {
             when (val outcome = fetchOnce(quayId)) {
                 is Attempt.Done -> {
                     if (attempt > 0 && outcome.coord != null) retriedSuccesses.incrementAndGet()
-                    return outcome.coord
+                    if (outcome.coord == null) meters.nsrLookupFailed("absent")
+                    return outcome.coord?.let { QuayResult.Resolved(it) } ?: QuayResult.Absent
                 }
 
                 is Attempt.Abort -> {
                     logger.warn("Quay {} {} — not retrying", quayId, outcome.reason)
-                    return null
+                    meters.nsrLookupFailed(if (outcome.transient) "pool" else "aborted")
+                    return if (outcome.transient) QuayResult.Transient(outcome.reason) else QuayResult.Absent
                 }
 
                 is Attempt.Retry -> {
@@ -252,7 +303,8 @@ class NsrService(
             }
         }
         logger.warn("Failed to get coordinates for quay {} after {} attempts: {}", quayId, nsrProperties.maxRetries, lastReason)
-        return null
+        meters.nsrLookupFailed("exhausted")
+        return QuayResult.Transient(lastReason ?: "retries exhausted")
     }
 
     /** One HTTP attempt, classified. Pure function of the response/exception — no side effects. */
@@ -275,6 +327,7 @@ class NsrService(
                 }
 
                 status == 429 || status >= 500 -> {
+                    if (status == 429) meters.nsrThrottled()
                     Attempt.Retry("got HTTP $status", parseRetryAfterMs(e.headers.getFirst("Retry-After")))
                 }
 
@@ -287,7 +340,11 @@ class NsrService(
             // Pool exhaustion is self-inflicted queueing: retrying makes it worse and burns budget
             // for requests that would otherwise succeed. The caller's per-request deadline is the
             // right backstop.
-            if (isPoolExhaustion(e)) Attempt.Abort("pool acquire failed ($reason)") else Attempt.Retry(reason, null)
+            if (isPoolExhaustion(e)) {
+                Attempt.Abort("pool acquire failed ($reason)", transient = true)
+            } else {
+                Attempt.Retry(reason, null)
+            }
         }
 
     /**

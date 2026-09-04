@@ -320,6 +320,9 @@ development), no profile is active and the defaults in `application.properties` 
 | `gcs.bucket.output` | `servicelinker-exchange` | GCS bucket for processed output |
 | `osrm.timeout` | `30000` | OSRM HTTP timeout in milliseconds |
 | `osrm.cache-routes` | `true` | Cache OSRM route results in memory |
+| `nsr.max-concurrent-requests` | `4` | Concurrent NSR quay lookups, **per pod, process-wide** (not per dataset) |
+| `nsr.max-retries` | `6` | Attempts per quay before the lookup is recorded as a transient failure |
+| `servicelinker.retry.throttled-delay-ms` | `30000` | Base backoff before re-running a dataset that failed because NSR throttled us |
 
 ### OSRM per-mode routing
 
@@ -627,6 +630,8 @@ gcloud storage rm gs://ror-servicelinker-exchange-gcp-dev/test/sample-netex.xml
 |------------|---------------|-----------------|
 | `NetexProcessorTest` | NeTEx XML parsing, ServiceLink generation, distance filtering | No |
 | `OSRMServiceTest` | Per-mode URL routing, caching, WireMock-based OSRM responses | No |
+| `NsrServiceTest` | Quay lookup, caching, retry/backoff, transient-vs-definitive failure classification | No |
+| `PubSubMessageHandlerTest` | Status message contract, retry rules (throttled retried, deterministic not) | No |
 | `ZipHandlingTest` | ZIP archive processing, non-XML preservation, magic-byte detection | No |
 | `PolylineEncodingTest` | Polyline encode/decode round-trip accuracy | No |
 | `ServicelinkerApplicationTests` | Spring context loads with all beans wired | No |
@@ -643,6 +648,25 @@ client will fail to connect. For local dev, either use docker-compose (sets the 
 **OSRM returns null routes:** Check that the OSRM instance for the transport mode is reachable and has loaded the correct network data.
 A `null` route means either the OSRM instance is down, timed out, or the coordinates are outside its loaded area. Routes over 100km
 are also filtered out.
+
+**Dataset FAILED with `IncompleteJourneyPatternException`:** Consecutive stop pairs in a JourneyPattern had no ServiceLink, which is
+almost always unresolved stop coordinates. The error message separates the two causes:
+
+- *Quays absent from NSR* -- the operator's data references stops that don't exist. Deterministic, not retried; the operator has to fix it.
+- *Transient NSR failures (429/5xx/timeout)* -- the message says `this run is retryable` and the dataset is retried automatically with a
+  30s/60s backoff. Watch `servicelinker_nsr_throttled_total` and `servicelinker_nsr_lookup_failed_total{reason}`.
+
+Sustained 429s mean our own burst is the problem: marduk starts several codespaces within seconds, and `nsr.max-concurrent-requests`
+is per pod, so the cluster-wide ceiling is that times the replica count. Lower it (`NSR_MAX_CONCURRENT_REQUESTS`), stagger the
+codespace kickoff in marduk, or ask for a quota bump on the `entur-servicelinker` ET-Client-Name.
+
+**Metrics:** exposed on `/actuator/prometheus`, all tagged with `codespace`:
+
+| Metric | Meaning |
+|--------|---------|
+| `servicelinker_nsr_throttled_total` | NSR answered 429 |
+| `servicelinker_nsr_lookup_failed_total{reason}` | Quay unresolved: `absent`, `exhausted`, `deadline`, `pool`, `aborted` |
+| `servicelinker_dataset_outcome_total{status}` | `success`, `failed`, `retried` |
 
 **ZIP processing produces empty output:** Ensure the input ZIP contains `.xml` files (case-insensitive). Non-XML files are passed
 through unchanged. Empty ZIPs produce empty output ZIPs.

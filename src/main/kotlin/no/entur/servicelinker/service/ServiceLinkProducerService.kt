@@ -144,7 +144,8 @@ class ServiceLinkProducerService(
 
         // Enrich: resolve coordinates via NSR for stops with an assignment but no inline coordinates
         MDC.put("stage", "processing/enrich")
-        val enrichedStopPoints = enrichStopPointsViaNsr(allStopPoints, allStopAssignments, stopVersions)
+        val enrichment = enrichStopPointsViaNsr(allStopPoints, allStopAssignments, stopVersions)
+        val enrichedStopPoints = enrichment.stopPoints
 
         logger.info(
             "ZIP pass 1: ${allStopPoints.size} stops, " +
@@ -188,6 +189,7 @@ class ServiceLinkProducerService(
             allServiceLinks,
             enrichedStopPoints,
             allStopAssignments,
+            enrichment.transientlyUnresolvedQuays,
         )
 
         // Assign each ServiceLink to the file that declares its from-stop's ScheduledStopPoint.
@@ -263,8 +265,14 @@ class ServiceLinkProducerService(
         modesFilter: Set<String>? = null,
         limit: Int? = null,
     ): ProcessedDataset {
-        val enrichedStops = extractAndEnrichStops(xmlData)
-        return netexProcessor.processNetexFile(xmlData, enrichedStops, modesFilter, limit)
+        val enrichment = extractAndEnrichStops(xmlData)
+        return netexProcessor.processNetexFile(
+            xmlData,
+            enrichment.stopPoints,
+            modesFilter,
+            limit,
+            enrichment.transientlyUnresolvedQuays,
+        )
     }
 
     suspend fun processXmlContentDirectly(
@@ -276,13 +284,14 @@ class ServiceLinkProducerService(
         try {
             logger.info("Starting direct ServiceLink production for XML content: $filename")
             val xmlData = xmlContent.toByteArray(Charsets.UTF_8)
-            val enrichedStops = extractAndEnrichStops(xmlData)
+            val enrichment = extractAndEnrichStops(xmlData)
             val (processedXml, addedCount) =
                 netexProcessor.processNetexFile(
                     xmlData,
-                    enrichedStops,
+                    enrichment.stopPoints,
                     modesFilter,
                     limit,
+                    enrichment.transientlyUnresolvedQuays,
                 )
             logger.info("Successfully processed XML content. Added $addedCount ServiceLinks for file: $filename")
             DirectProcessingResult(
@@ -300,7 +309,13 @@ class ServiceLinkProducerService(
             )
         }
 
-    private suspend fun extractAndEnrichStops(xmlData: ByteArray): Map<String, StopPoint> =
+    /** Enriched stops plus the quays whose NSR lookup failed transiently (see [NsrLookupResult]). */
+    private data class Enrichment(
+        val stopPoints: Map<String, StopPoint>,
+        val transientlyUnresolvedQuays: Set<String>,
+    )
+
+    private suspend fun extractAndEnrichStops(xmlData: ByteArray): Enrichment =
         try {
             val doc = metadataExtractor.extract(NetexProcessor.SINGLE_DOC_NAME, xmlData)
             val stops = doc.stopPoints.associateBy { it.id }
@@ -309,20 +324,21 @@ class ServiceLinkProducerService(
             throw e
         } catch (e: Exception) {
             logger.warn("Failed to extract/enrich stops for NSR lookup: ${e.message}")
-            emptyMap()
+            Enrichment(emptyMap(), emptySet())
         }
 
     private suspend fun enrichStopPointsViaNsr(
         stopPoints: Map<String, StopPoint>,
         stopAssignments: Map<String, String>,
         stopVersions: Map<String, String> = emptyMap(),
-    ): Map<String, StopPoint> {
+    ): Enrichment {
         val enriched = stopPoints.toMutableMap()
 
         val toLookup = stopAssignments.filterKeys { it !in enriched }
-        if (toLookup.isEmpty()) return enriched
+        if (toLookup.isEmpty()) return Enrichment(enriched, emptySet())
 
-        val coordsByQuay = nsrService.getQuayCoordinates(toLookup.values)
+        val lookup = nsrService.lookupQuayCoordinates(toLookup.values)
+        val coordsByQuay = lookup.coordinates
 
         var resolved = 0
         var failed = 0
@@ -346,12 +362,13 @@ class ServiceLinkProducerService(
             }
         }
         logger.info(
-            "NSR enrichment: {} stops resolved, {} stops failed (of {} needing lookup)",
+            "NSR enrichment: {} stops resolved, {} stops failed ({} of them transiently) (of {} needing lookup)",
             resolved,
             failed,
+            lookup.transientFailures.size,
             toLookup.size,
         )
-        return enriched
+        return Enrichment(enriched, lookup.transientFailures)
     }
 
     fun getRoutingCacheStatistics(): Map<String, Any> =
