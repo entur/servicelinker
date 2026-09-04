@@ -2,7 +2,6 @@ package no.entur.servicelinker.service
 
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -10,7 +9,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
 import no.entur.servicelinker.model.Coordinate
 import org.slf4j.LoggerFactory
@@ -28,6 +26,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.xml.stream.XMLInputFactory
 import javax.xml.stream.XMLStreamConstants
+import javax.xml.stream.XMLStreamException
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
@@ -80,7 +79,8 @@ data class NsrProperties(
 
 /**
  * Coordinates resolved for a batch, plus the quays whose lookup failed in a way that a later run
- * could plausibly succeed at (429/5xx/network/deadline) as opposed to a definitive negative (404).
+ * could plausibly succeed at (429/408/5xx/auth/network/deadline) as opposed to a definitive
+ * negative (404).
  */
 data class NsrLookupResult(
     val coordinates: Map<String, Coordinate>,
@@ -90,7 +90,7 @@ data class NsrLookupResult(
 @Service
 class NsrService(
     private val nsrProperties: NsrProperties,
-    private val meters: ServicelinkerMetrics = ServicelinkerMetrics(SimpleMeterRegistry()),
+    private val meters: ServicelinkerMetrics,
 ) {
     private val logger = LoggerFactory.getLogger(NsrService::class.java)
 
@@ -178,16 +178,14 @@ class NsrService(
             toFetch
                 .map { id ->
                     async {
-                        semaphore.withPermit {
-                            when (val outcome = fetchWithDeadlineAndRetries(id, retriedSuccesses)) {
-                                is QuayResult.Resolved -> {
-                                    if (nsrProperties.cacheCoordinates) coordinateCache.put(id, outcome.coord)
-                                    results[id] = outcome.coord
-                                }
-
-                                is QuayResult.Absent -> Unit
-                                is QuayResult.Transient -> transient.add(id)
+                        when (val outcome = fetchWithDeadlineAndRetries(id, retriedSuccesses)) {
+                            is QuayResult.Resolved -> {
+                                if (nsrProperties.cacheCoordinates) coordinateCache.put(id, outcome.coord)
+                                results[id] = outcome.coord
                             }
+
+                            is QuayResult.Absent -> Unit
+                            is QuayResult.Transient -> transient.add(id)
                         }
                     }
                 }.awaitAll()
@@ -207,26 +205,60 @@ class NsrService(
         return NsrLookupResult(results, transient.toSet())
     }
 
-    /** Per-quay total deadline caps the worst-case retry budget
-     *  (maxRetries × responseTimeout + retryMaxDelayMs × (maxRetries-1)) at
-     *  [NsrProperties.perRequestDeadlineMs], so one slow quay can't hold a semaphore permit for the
-     *  whole budget. Set [NsrProperties.perRequestDeadlineMs] to 0 to disable (useful in tests where
-     *  `runTest`'s virtual time scheduler fires `withTimeout` ahead of real-time I/O). */
+    /**
+     * Per-quay total deadline caps the worst-case retry budget
+     * (maxRetries × responseTimeout + retryMaxDelayMs × (maxRetries-1)) at
+     * [NsrProperties.perRequestDeadlineMs]. Set it to 0 to disable (useful in tests where
+     * `runTest`'s virtual time scheduler fires `withTimeout` ahead of real-time I/O).
+     *
+     * The permit is taken before the deadline starts: a big batch queues thousands of quays behind
+     * [NsrProperties.maxConcurrentRequests] permits, and charging that wait to the per-quay budget
+     * would time out the tail of every large dataset.
+     */
     private suspend fun fetchWithDeadlineAndRetries(
         quayId: String,
         retriedSuccesses: AtomicInteger,
     ): QuayResult {
-        if (nsrProperties.perRequestDeadlineMs <= 0) return fetchWithRetries(quayId, retriedSuccesses)
-        return try {
-            withTimeout(nsrProperties.perRequestDeadlineMs) { fetchWithRetries(quayId, retriedSuccesses) }
-        } catch (e: TimeoutCancellationException) {
-            logger.warn(
-                "Failed to get coordinates for quay {}: per-request deadline exceeded ({}ms)",
-                quayId,
-                nsrProperties.perRequestDeadlineMs,
-            )
-            meters.nsrLookupFailed("deadline")
-            QuayResult.Transient("per-request deadline exceeded")
+        val permit = Permit()
+        permit.acquire()
+        try {
+            if (nsrProperties.perRequestDeadlineMs <= 0) return fetchWithRetries(quayId, retriedSuccesses, permit)
+            return try {
+                withTimeout(nsrProperties.perRequestDeadlineMs) { fetchWithRetries(quayId, retriedSuccesses, permit) }
+            } catch (e: TimeoutCancellationException) {
+                logger.warn(
+                    "Failed to get coordinates for quay {}: per-request deadline exceeded ({}ms)",
+                    quayId,
+                    nsrProperties.perRequestDeadlineMs,
+                )
+                meters.nsrLookupFailed("deadline")
+                QuayResult.Transient("per-request deadline exceeded")
+            }
+        } finally {
+            permit.release()
+        }
+    }
+
+    /**
+     * One quay's semaphore permit, handed to the retry loop so it can give it back while it sleeps.
+     * Holding it across the backoff would let a 429 storm park every permit on a `delay` and stop
+     * the pod issuing NSR requests at all. Confined to a single coroutine, so no locking.
+     */
+    private inner class Permit {
+        private var held = false
+
+        suspend fun acquire() {
+            if (!held) {
+                semaphore.acquire()
+                held = true
+            }
+        }
+
+        fun release() {
+            if (held) {
+                held = false
+                semaphore.release()
+            }
         }
     }
 
@@ -259,12 +291,13 @@ class NsrService(
         ) : Attempt()
 
         /**
-         * Stop now. [transient] separates load-induced aborts (pool exhaustion — retrying in the
-         * same batch only makes it worse, but a later run would likely succeed) from permanent
-         * ones (4xx we won't retry).
+         * Stop now. [transient] separates aborts a later run could get past (pool exhaustion, or
+         * an auth/quota rejection — retrying either in the same batch only makes it worse) from
+         * permanent ones (4xx we won't retry). [metric] is the counter label for the cause.
          */
         data class Abort(
             val reason: String,
+            val metric: String,
             val transient: Boolean = false,
         ) : Attempt()
     }
@@ -276,6 +309,7 @@ class NsrService(
     private suspend fun fetchWithRetries(
         quayId: String,
         retriedSuccesses: AtomicInteger,
+        permit: Permit,
     ): QuayResult {
         var prevDelay = 0L
         var lastReason: String? = null
@@ -289,7 +323,7 @@ class NsrService(
 
                 is Attempt.Abort -> {
                     logger.warn("Quay {} {} — not retrying", quayId, outcome.reason)
-                    meters.nsrLookupFailed(if (outcome.transient) "pool" else "aborted")
+                    meters.nsrLookupFailed(outcome.metric)
                     return if (outcome.transient) QuayResult.Transient(outcome.reason) else QuayResult.Absent
                 }
 
@@ -298,7 +332,9 @@ class NsrService(
                     if (attempt == nsrProperties.maxRetries - 1) break
                     prevDelay = backoffDelayMs(attempt, prevDelay, outcome.delayHintMs)
                     logger.debug("Quay {} {} (attempt {}), retrying in {}ms", quayId, outcome.reason, attempt + 1, prevDelay)
+                    permit.release()
                     delay(prevDelay)
+                    permit.acquire()
                 }
             }
         }
@@ -319,6 +355,10 @@ class NsrService(
             Attempt.Done(parseCoordinateFromXml(body))
         } catch (e: CancellationException) {
             throw e
+        } catch (e: XMLStreamException) {
+            // A 200 we could not parse is not the same as a quay that isn't there — NSR may answer
+            // properly later. Don't burn retries on it, but keep the dataset retryable.
+            Attempt.Abort("returned unparseable XML (${e.message})", metric = "parse", transient = true)
         } catch (e: WebClientResponseException) {
             val status = e.statusCode.value()
             when {
@@ -326,13 +366,20 @@ class NsrService(
                     Attempt.Done(null)
                 }
 
-                status == 429 || status >= 500 -> {
+                status == 429 || status == 408 || status >= 500 -> {
                     if (status == 429) meters.nsrThrottled()
                     Attempt.Retry("got HTTP $status", parseRetryAfterMs(e.headers.getFirst("Retry-After")))
                 }
 
+                status == 401 || status == 403 -> {
+                    // Quota exhaustion and an unregistered ET-Client-Name both arrive as 401/403.
+                    // Hammering won't clear either, but a later run can — so don't report these
+                    // quays as definitively missing from NSR.
+                    Attempt.Abort("got HTTP $status", metric = "auth", transient = true)
+                }
+
                 else -> {
-                    Attempt.Abort("got HTTP $status")
+                    Attempt.Abort("got HTTP $status", metric = "aborted")
                 }
             }
         } catch (e: Exception) {
@@ -341,7 +388,7 @@ class NsrService(
             // for requests that would otherwise succeed. The caller's per-request deadline is the
             // right backstop.
             if (isPoolExhaustion(e)) {
-                Attempt.Abort("pool acquire failed ($reason)", transient = true)
+                Attempt.Abort("pool acquire failed ($reason)", metric = "pool", transient = true)
             } else {
                 Attempt.Retry(reason, null)
             }
@@ -380,41 +427,38 @@ class NsrService(
         return header.trim().toLongOrNull()?.let { it * 1000 }
     }
 
-    private fun parseCoordinateFromXml(xml: String): Coordinate? =
-        try {
-            val reader = xmlInputFactory.createXMLStreamReader(StringReader(xml))
-            var latitude: java.math.BigDecimal? = null
-            var longitude: java.math.BigDecimal? = null
-            var inCentroid = false
-            var inLocation = false
+    /** Null means the response parsed but carried no Centroid. Throws if the XML is malformed. */
+    private fun parseCoordinateFromXml(xml: String): Coordinate? {
+        val reader = xmlInputFactory.createXMLStreamReader(StringReader(xml))
+        var latitude: java.math.BigDecimal? = null
+        var longitude: java.math.BigDecimal? = null
+        var inCentroid = false
+        var inLocation = false
 
-            while (reader.hasNext()) {
-                when (reader.next()) {
-                    XMLStreamConstants.START_ELEMENT -> {
-                        when (reader.localName) {
-                            "Centroid" -> inCentroid = true
-                            "Location" -> if (inCentroid) inLocation = true
-                            "Latitude" -> if (inLocation) latitude = reader.elementText.trim().toBigDecimalOrNull()
-                            "Longitude" -> if (inLocation) longitude = reader.elementText.trim().toBigDecimalOrNull()
-                        }
-                    }
-
-                    XMLStreamConstants.END_ELEMENT -> {
-                        when (reader.localName) {
-                            "Centroid" -> inCentroid = false
-                            "Location" -> inLocation = false
-                        }
+        while (reader.hasNext()) {
+            when (reader.next()) {
+                XMLStreamConstants.START_ELEMENT -> {
+                    when (reader.localName) {
+                        "Centroid" -> inCentroid = true
+                        "Location" -> if (inCentroid) inLocation = true
+                        "Latitude" -> if (inLocation) latitude = reader.elementText.trim().toBigDecimalOrNull()
+                        "Longitude" -> if (inLocation) longitude = reader.elementText.trim().toBigDecimalOrNull()
                     }
                 }
-                if (latitude != null && longitude != null) break
-            }
-            reader.close()
 
-            if (latitude != null && longitude != null) Coordinate(latitude, longitude) else null
-        } catch (e: Exception) {
-            logger.warn("Failed to parse NSR XML response: {}", e.message)
-            null
+                XMLStreamConstants.END_ELEMENT -> {
+                    when (reader.localName) {
+                        "Centroid" -> inCentroid = false
+                        "Location" -> inLocation = false
+                    }
+                }
+            }
+            if (latitude != null && longitude != null) break
         }
+        reader.close()
+
+        return if (latitude != null && longitude != null) Coordinate(latitude, longitude) else null
+    }
 
     fun getCacheSize(): Long = coordinateCache.estimatedSize()
 

@@ -1,5 +1,6 @@
 package no.entur.servicelinker.service
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -37,7 +38,7 @@ class ZipHandlingTest {
         mockOsrmService = mockk(relaxed = true)
         mockGcsService = mockk(relaxed = true)
         mockNsrService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor(), ServicelinkerMetrics(SimpleMeterRegistry()))
         serviceLinkProducerService =
             ServiceLinkProducerService(
                 mockGcsService,

@@ -1,5 +1,6 @@
 package no.entur.servicelinker.service
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -45,7 +46,7 @@ class StaxOutputRegressionTest {
     @BeforeEach
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor())
+        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor(), ServicelinkerMetrics(SimpleMeterRegistry()))
 
         coEvery {
             mockOsrmService.calculateRoute(any(), any(), any())
@@ -780,5 +781,45 @@ class StaxOutputRegressionTest {
         assertTrue(unresolvedLine.contains("NSR:Quay:2"), "The genuinely-unresolved quay must be reported")
         assertFalse(unresolvedLine.contains("NSR:Quay:1"), "A resolved neighbour must not be reported as failed")
         assertFalse(unresolvedLine.contains("NSR:Quay:3"), "A resolved neighbour must not be reported as failed")
+    }
+
+    @Test
+    fun `retryable only when a throttled quay is an endpoint of a missing pair`() {
+        val coord = Coordinate(BigDecimal("60.0"), BigDecimal("10.0"))
+        // A -> B -> C, all resolved, but A->B has no ServiceLink for some other reason. Quay 9
+        // failed transiently but belongs to a stop that isn't in any missing pair, so retrying the
+        // dataset would change nothing.
+        val stopPoints =
+            mapOf(
+                "SSP:A" to StopPoint("SSP:A", null, coord, null, null),
+                "SSP:B" to StopPoint("SSP:B", null, coord, null, null),
+                "SSP:C" to StopPoint("SSP:C", null, coord, null, null),
+            )
+        val stopAssignments = mapOf("SSP:A" to "NSR:Quay:1", "SSP:B" to "NSR:Quay:2", "SSP:C" to "NSR:Quay:3")
+        val unrelated =
+            assertThrows(IncompleteJourneyPatternException::class.java) {
+                NetexProcessor.checkJourneyPatternIntegrity(
+                    jpStopSequences = mapOf("JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
+                    allServiceLinks = mapOf("SSP:B_SSP:C" to "SL:1"),
+                    stopPoints = stopPoints,
+                    stopAssignments = stopAssignments,
+                    transientlyUnresolvedQuays = setOf("NSR:Quay:9"),
+                )
+            }
+        assertFalse(unrelated.retryable, "A transient quay outside every missing pair must not force a rerun")
+
+        // Now B itself is the throttled quay: it has a PSA, no coordinate, and both missing pairs
+        // hinge on it.
+        val throttled =
+            assertThrows(IncompleteJourneyPatternException::class.java) {
+                NetexProcessor.checkJourneyPatternIntegrity(
+                    jpStopSequences = mapOf("JP:1" to listOf("SSP:A", "SSP:B", "SSP:C")),
+                    allServiceLinks = emptyMap(),
+                    stopPoints = stopPoints - "SSP:B",
+                    stopAssignments = stopAssignments,
+                    transientlyUnresolvedQuays = setOf("NSR:Quay:2"),
+                )
+            }
+        assertTrue(throttled.retryable, "A throttled quay behind a missing pair must make the run retryable")
     }
 }

@@ -1,5 +1,9 @@
 package no.entur.servicelinker.service
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock.*
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
@@ -7,39 +11,50 @@ import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
 import no.entur.servicelinker.model.TransportMode
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import org.springframework.core.io.ClassPathResource
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class OSRMServiceTest {
     private lateinit var osrmService: OSRMService
 
-    private val busPort = 8089
-    private val railPort = 8090
-
     private lateinit var busWireMock: WireMockServer
     private lateinit var railWireMock: WireMockServer
+    private lateinit var ferryWireMock: WireMockServer
+    private lateinit var waterWireMock: WireMockServer
 
     private val oslo = Coordinate(59.913953, 10.75261)
     private val lillestrøm = Coordinate(59.955648, 11.046175)
 
+    // Open-coast hop with no mapped ferry way between the two, so the real water graph answers
+    // NoRoute for it: one of the pairs behind the September 2026 NOR-WAY report.
+    private val nesna = Coordinate(66.200378, 13.008075)
+    private val sandnessjøen = Coordinate(66.024, 12.639)
+
     @BeforeEach
     fun setUp() {
-        busWireMock = WireMockServer(WireMockConfiguration.options().port(busPort))
-        railWireMock = WireMockServer(WireMockConfiguration.options().port(railPort))
-        busWireMock.start()
-        railWireMock.start()
+        // Dynamic ports: fixed ones collide with the other WireMock-based tests as soon as
+        // anything runs the suite in parallel.
+        busWireMock = startWireMock()
+        railWireMock = startWireMock()
+        ferryWireMock = startWireMock()
+        waterWireMock = startWireMock()
 
         val properties =
             OsrmProperties(
                 urls =
                     mapOf(
-                        "bus" to "http://localhost:$busPort",
-                        "rail" to "http://localhost:$railPort",
-                        "default" to "http://localhost:$busPort",
+                        "bus" to busWireMock.baseUrl(),
+                        "rail" to railWireMock.baseUrl(),
+                        "ferry" to ferryWireMock.baseUrl(),
+                        "water" to waterWireMock.baseUrl(),
+                        "default" to busWireMock.baseUrl(),
                     ),
                 timeout = 5000,
                 cacheRoutes = false,
@@ -52,7 +67,11 @@ class OSRMServiceTest {
     fun tearDown() {
         busWireMock.stop()
         railWireMock.stop()
+        ferryWireMock.stop()
+        waterWireMock.stop()
     }
+
+    private fun startWireMock() = WireMockServer(WireMockConfiguration.options().dynamicPort()).apply { start() }
 
     private fun stubOsrmResponse(server: WireMockServer) {
         val resource = ClassPathResource("sample-osrm-polyline.json")
@@ -142,6 +161,64 @@ class OSRMServiceTest {
         }
 
     @Test
+    fun `should route FERRY mode to ferry OSRM instance`() =
+        runTest {
+            stubOsrmResponse(ferryWireMock)
+            osrmService.calculateRoute(oslo, lillestrøm, TransportMode.FERRY)
+            ferryWireMock.verify(1, getRequestedFor(urlPathMatching("/route/v1/driving/.*")))
+            waterWireMock.verify(0, getRequestedFor(urlPathMatching("/route/v1/driving/.*")))
+        }
+
+    /**
+     * Covers our own mode→instance mapping only. In prd both keys point at the same graph, but they
+     * are separate properties and WATER must follow `osrm.urls.water`.
+     */
+    @Test
+    fun `should route WATER mode to water OSRM instance, never ferry`() =
+        runTest {
+            stubOsrmResponse(waterWireMock)
+            osrmService.calculateRoute(nesna, sandnessjøen, TransportMode.WATER)
+            waterWireMock.verify(1, getRequestedFor(urlPathMatching("/route/v1/driving/.*")))
+            ferryWireMock.verify(0, getRequestedFor(urlPathMatching("/route/v1/driving/.*")))
+        }
+
+    @Test
+    fun `should fall back to null and log the OSRM error body on a 400`() =
+        runTest {
+            val padding = "x".repeat(1000)
+            waterWireMock.stubFor(
+                get(urlPathMatching("/route/v1/driving/.*"))
+                    .willReturn(
+                        aResponse()
+                            .withStatus(400)
+                            .withHeader("Content-Type", "application/json")
+                            .withBody("""{"code":"NoSegment","message":"$padding"}"""),
+                    ),
+            )
+
+            val warning = captureOsrmWarning { assertNull(osrmService.calculateRoute(nesna, sandnessjøen, TransportMode.WATER)) }
+
+            waterWireMock.verify(1, getRequestedFor(urlPathMatching("/route/v1/driving/.*")))
+            // The body is the diagnostic: without it a 400 is indistinguishable from NoRoute.
+            assertTrue(warning.contains("NoSegment"), warning)
+            assertTrue(warning.contains(waterWireMock.baseUrl()), warning)
+            assertFalse(warning.contains(padding), "response body must be truncated to MAX_LOGGED_ERROR_BODY")
+        }
+
+    /** Runs [block] with a logback appender on OSRMService and returns its single WARN message. */
+    private suspend fun captureOsrmWarning(block: suspend () -> Unit): String {
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        val logger = LoggerFactory.getLogger(OSRMService::class.java) as Logger
+        logger.addAppender(appender)
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+        }
+        return appender.list.single { it.level == Level.WARN }.formattedMessage
+    }
+
+    @Test
     fun `should route unknown mode to default OSRM instance`() =
         runTest {
             stubOsrmResponse(busWireMock) // default maps to busPort in our test config
@@ -164,9 +241,9 @@ class OSRMServiceTest {
                 OsrmProperties(
                     urls =
                         mapOf(
-                            "bus" to "http://localhost:$busPort",
-                            "rail" to "http://localhost:$railPort",
-                            "default" to "http://localhost:$busPort",
+                            "bus" to busWireMock.baseUrl(),
+                            "rail" to railWireMock.baseUrl(),
+                            "default" to busWireMock.baseUrl(),
                         ),
                     timeout = 5000,
                     cacheRoutes = true,
