@@ -35,6 +35,7 @@ class NetexProcessor(
         externalStopPoints: Map<String, StopPoint> = emptyMap(),
         modesFilter: Set<String>? = null,
         limit: Int? = null,
+        transientlyUnresolvedQuays: Set<String> = emptySet(),
     ): ProcessedDataset {
         logger.info("Starting NeTEx file processing")
         val metadata = metadataExtractor.extract(SINGLE_DOC_NAME, inputBytes)
@@ -80,6 +81,7 @@ class NetexProcessor(
             allServiceLinks,
             externalStopPoints + stopPointsMap,
             metadata.assignments,
+            transientlyUnresolvedQuays,
         )
 
         if (addedCount == 0) {
@@ -386,6 +388,7 @@ class NetexProcessor(
             allServiceLinks: Map<String, String>,
             stopPoints: Map<String, StopPoint> = emptyMap(),
             stopAssignments: Map<String, String> = emptyMap(),
+            transientlyUnresolvedQuays: Set<String> = emptySet(),
         ) {
             val missing = mutableListOf<MissingPair>()
             var totalMissing = 0
@@ -405,17 +408,41 @@ class NetexProcessor(
             }
             if (missing.isEmpty()) return
 
+            val unresolvedQuays = unresolvedQuays(missing, stopPoints, stopAssignments)
+            val throttled = unresolvedQuays.intersect(transientlyUnresolvedQuays)
             throw IncompleteJourneyPatternException(
                 missing.take(MAX_REPORTED_MISSING_PAIRS),
-                formatIntegrityError(totalMissing, missing, stopPoints, stopAssignments),
+                formatIntegrityError(totalMissing, missing, stopPoints, stopAssignments, unresolvedQuays, throttled),
+                retryable = throttled.isNotEmpty(),
             )
         }
+
+        /**
+         * Quays that have a PassengerStopAssignment but no coordinate in [stopPoints].
+         *
+         * Order matters: filter by SSP ref, THEN map to quay. [stopPoints] is keyed by SSP ref,
+         * not quay ref, so mapping to quay first would make the filter a no-op that blames every
+         * PSA-backed quay in the sample — even ones that resolved and are implicated only by
+         * neighbouring an unresolved stop. "Unresolved" == absent from the enriched map.
+         */
+        private fun unresolvedQuays(
+            sample: List<MissingPair>,
+            stopPoints: Map<String, StopPoint>,
+            stopAssignments: Map<String, String>,
+        ): Set<String> =
+            sample
+                .flatMap { listOf(it.fromRef, it.toRef) }
+                .filter { it in stopAssignments && it !in stopPoints }
+                .mapNotNull { stopAssignments[it] }
+                .toSet()
 
         private fun formatIntegrityError(
             totalMissing: Int,
             sample: List<MissingPair>,
             stopPoints: Map<String, StopPoint>,
             stopAssignments: Map<String, String>,
+            unresolvedQuays: Set<String>,
+            throttledQuays: Set<String>,
         ): String {
             // `sample` is capped at HARD_CAP_MISSING_PAIRS so we only see a representative subset
             // — counts and per-JP groupings are over what we sampled. `totalMissing` is the truth.
@@ -428,15 +455,6 @@ class NetexProcessor(
                     }
                 }
             val (withPsa, withoutPsa) = distinctStops.partition { it in stopAssignments }
-            // Order matters: filter by SSP ref, THEN map to quay. `stopPoints` is keyed by SSP ref,
-            // not quay ref, so mapping to quay first would make the filter a no-op that blames every
-            // PSA-backed quay in the sample — even ones that resolved and are implicated only by
-            // neighbouring an unresolved stop. "Unresolved" == absent from the enriched map.
-            val unresolvedQuays =
-                withPsa
-                    .filter { it !in stopPoints }
-                    .mapNotNull { stopAssignments[it] }
-                    .toSet()
 
             val sampleLines =
                 byJp.entries.take(SAMPLE_JPS).joinToString("\n") { (jpId, pairs) ->
@@ -465,6 +483,10 @@ class NetexProcessor(
                     val quaySample = unresolvedQuays.take(SAMPLE_QUAYS).joinToString(", ")
                     val moreQuays = if (unresolvedQuays.size > SAMPLE_QUAYS) " (+${unresolvedQuays.size - SAMPLE_QUAYS} more)" else ""
                     append("  Quays with PSA but no resolved coordinate (missing from NSR or the lookup failed): $quaySample$moreQuays\n")
+                }
+                if (throttledQuays.isNotEmpty()) {
+                    append("  ${throttledQuays.size} of those failed transiently (NSR rate-limit/timeout), not because they are absent")
+                    append(" — this run is retryable.\n")
                 }
                 append("Sample missing pairs:\n")
                 append(sampleLines)

@@ -318,4 +318,35 @@ class NsrServiceTest {
             wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A2")))
             wireMock.verify(1, getRequestedFor(urlPathEqualTo("/quays/NSR%3AQuay%3A3")))
         }
+
+    @Test
+    fun `separates transient 429 failures from a definitive 404`() =
+        runTest {
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3Athrottled"))
+                    .willReturn(aResponse().withStatus(429)),
+            )
+            wireMock.stubFor(
+                get(urlPathEqualTo("/quays/NSR%3AQuay%3Agone"))
+                    .willReturn(aResponse().withStatus(404)),
+            )
+
+            val service =
+                NsrService(
+                    NsrProperties(
+                        baseUrl = "http://localhost:$port",
+                        timeout = 5000,
+                        cacheCoordinates = false,
+                        maxRetries = 2,
+                        retryBaseDelayMs = 1,
+                        retryMaxDelayMs = 5,
+                        perRequestDeadlineMs = 0,
+                    ),
+                )
+
+            val result = service.lookupQuayCoordinates(listOf("NSR:Quay:throttled", "NSR:Quay:gone"))
+
+            assertTrue(result.coordinates.isEmpty())
+            assertEquals(setOf("NSR:Quay:throttled"), result.transientFailures)
+        }
 }

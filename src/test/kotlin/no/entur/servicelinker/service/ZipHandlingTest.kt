@@ -233,8 +233,8 @@ class ZipHandlingTest {
 
             // NSR enrichment returns coordinates for stops that have no inline coordinates
             coEvery {
-                mockNsrService.getQuayCoordinates(any<Collection<String>>())
-            } returns mapOf("NSR:Quay:1" to oslo, "NSR:Quay:2" to lillestrøm)
+                mockNsrService.lookupQuayCoordinates(any<Collection<String>>())
+            } returns NsrLookupResult(mapOf("NSR:Quay:1" to oslo, "NSR:Quay:2" to lillestrøm), emptySet())
 
             // Line file is first — matches real-world ordering (e.g. Havila ZIP).
             // The fallback `firstXmlFile` would be "line.xml", so if stopDeclarationFile

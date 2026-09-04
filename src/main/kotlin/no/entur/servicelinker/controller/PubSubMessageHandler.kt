@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.slf4j.MDCContext
 import no.entur.servicelinker.model.IncompleteJourneyPatternException
 import no.entur.servicelinker.service.ServiceLinkProducerService
+import no.entur.servicelinker.service.ServicelinkerMetrics
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
@@ -25,6 +26,11 @@ class PubSubMessageHandler(
     private val pubSubTemplate: PubSubTemplate,
     @Value("\${servicelinker.pubsub.outbound.topic}") private val outboundTopic: String,
     @Value("\${gcs.bucket.input}") private val inputBucket: String,
+    private val meters: ServicelinkerMetrics,
+    // NSR rate-limiting comes from several codespaces starting within seconds of each other.
+    // 2s doesn't outlast that; 30s and 60s do. Overridable so tests don't sleep for a minute.
+    @Value("\${servicelinker.retry.throttled-delay-ms:30000}")
+    private val throttledRetryDelayMs: Long = THROTTLED_RETRY_DELAY_MS,
 ) {
     private val logger = LoggerFactory.getLogger(PubSubMessageHandler::class.java)
 
@@ -86,12 +92,14 @@ class PubSubMessageHandler(
                     ),
             )
             logger.info("Published SUCCESS status")
+            meters.datasetOutcome("success")
 
             acker?.ack()
             logger.info("Message acknowledged")
         } catch (e: Throwable) {
             MDC.put("stage", "outgoing/failed")
             logger.error("Failed to process PubSub message: {}", e.message, e)
+            meters.datasetOutcome("failed")
             try {
                 // GCP PubSub caps attribute values at 1024 bytes
                 // (https://cloud.google.com/pubsub/quotas#resource_limits). The integrity-check
@@ -129,6 +137,7 @@ class PubSubMessageHandler(
         modesFilter: Set<String>?,
     ): Int {
         var lastException: Exception? = null
+        var nsrThrottled = false
         repeat(MAX_RETRIES) { attempt ->
             logger.info("Starting processing attempt ${attempt + 1}/$MAX_RETRIES for gs://$bucketName/$objectName")
             val executor = Executors.newSingleThreadExecutor()
@@ -157,18 +166,26 @@ class PubSubMessageHandler(
             } catch (e: Exception) {
                 // future.get wraps task exceptions in ExecutionException, so unwrap once.
                 val rootCause = e.cause ?: e
-                if (rootCause is IncompleteJourneyPatternException) {
-                    // Deterministic failure: same input + same NSR cache → same outcome. Retrying
-                    // would just triple the log noise and the NSR-batch traffic on rollover.
+                if (rootCause is IncompleteJourneyPatternException && !rootCause.retryable) {
+                    // Deterministic failure: the quays are genuinely absent from NSR, so the same
+                    // input + same NSR cache → same outcome. Retrying would just triple the log
+                    // noise and the NSR-batch traffic on rollover. A run that failed because NSR
+                    // throttled us is a different animal — it falls through to the retry below.
                     throw rootCause
                 }
-                lastException = e
-                logger.warn("Attempt ${attempt + 1}/$MAX_RETRIES failed for gs://$bucketName/$objectName: ${e.message}")
+                lastException = rootCause as? Exception ?: e
+                nsrThrottled = rootCause is IncompleteJourneyPatternException && rootCause.retryable
+                logger.warn("Attempt ${attempt + 1}/$MAX_RETRIES failed for gs://$bucketName/$objectName: ${rootCause.message}")
             } finally {
                 executor.shutdownNow()
             }
             if (attempt < MAX_RETRIES - 1) {
-                Thread.sleep(RETRY_DELAY_MS * (attempt + 1))
+                // Back off much harder after NSR throttling: the retry is only worth anything once
+                // the concurrent datasets that caused the burst have drained.
+                val base = if (nsrThrottled) throttledRetryDelayMs else RETRY_DELAY_MS
+                logger.info("Retrying in {}ms (nsrThrottled={})", base * (attempt + 1), nsrThrottled)
+                meters.datasetOutcome("retried")
+                Thread.sleep(base * (attempt + 1))
             }
         }
         throw lastException ?: RuntimeException("Failed after $MAX_RETRIES attempts")
@@ -177,6 +194,7 @@ class PubSubMessageHandler(
     private companion object {
         const val MAX_RETRIES = 3
         const val RETRY_DELAY_MS = 2000L
+        const val THROTTLED_RETRY_DELAY_MS = 30_000L
         const val PROCESSING_TIMEOUT_MS = 15 * 60 * 1000L // 15 minutes
 
         // Matches Constants.java in marduk

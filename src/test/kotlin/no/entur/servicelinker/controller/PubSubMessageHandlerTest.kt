@@ -4,11 +4,13 @@ import com.google.cloud.spring.pubsub.core.PubSubTemplate
 import com.google.cloud.spring.pubsub.support.BasicAcknowledgeablePubsubMessage
 import com.google.cloud.spring.pubsub.support.GcpPubSubHeaders
 import com.google.pubsub.v1.PubsubMessage
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import no.entur.servicelinker.model.IncompleteJourneyPatternException
 import no.entur.servicelinker.service.ServiceLinkProducerService
+import no.entur.servicelinker.service.ServicelinkerMetrics
 import org.junit.jupiter.api.Test
 import org.springframework.messaging.Message
 import org.springframework.messaging.support.MessageBuilder
@@ -29,7 +31,15 @@ class PubSubMessageHandlerTest {
         mockk {
             every { publish<String>(any(), any(), capture(publishedAttributes)) } returns CompletableFuture.completedFuture("msg-id")
         }
-    private val handler = PubSubMessageHandler(service, pubSubTemplate, "ServicelinkerStatusQueue", "input-bucket")
+    private val handler =
+        PubSubMessageHandler(
+            service,
+            pubSubTemplate,
+            "ServicelinkerStatusQueue",
+            "input-bucket",
+            ServicelinkerMetrics(SimpleMeterRegistry()),
+            throttledRetryDelayMs = 1,
+        )
 
     private fun inboundMessage(): Message<*> {
         val pubsubMessage =
@@ -70,6 +80,37 @@ class PubSubMessageHandlerTest {
         assertEquals("STARTED", publishedAttributes[0][statusHeader])
         assertEquals("FAILED", publishedAttributes[1][statusHeader])
         assertParseableEmitTimes()
+    }
+
+    @Test
+    fun `retries a throttled IncompleteJourneyPattern failure before publishing FAILED`() {
+        var calls = 0
+        coEvery { service.processDataset(any(), any(), any()) } answers {
+            calls++
+            if (calls == 1) throw IncompleteJourneyPatternException(emptyList(), "throttled", retryable = true)
+            11
+        }
+
+        handler.handleMessage(inboundMessage())
+
+        assertEquals(2, calls, "A retryable (NSR-throttled) failure must be retried")
+        assertEquals("SUCCESS", publishedAttributes[1][statusHeader])
+        assertEquals("11", publishedAttributes[1]["addedServiceLinksCount"])
+    }
+
+    @Test
+    fun `does not retry a deterministic IncompleteJourneyPattern failure`() {
+        var calls = 0
+        coEvery { service.processDataset(any(), any(), any()) } answers {
+            calls++
+            throw IncompleteJourneyPatternException(emptyList(), "quays absent from NSR")
+        }
+
+        handler.handleMessage(inboundMessage())
+
+        assertEquals(1, calls, "A deterministic failure must not be retried")
+        assertEquals("FAILED", publishedAttributes[1][statusHeader])
+        assertEquals("quays absent from NSR", publishedAttributes[1]["LinkingFailureReason"])
     }
 
     private fun assertParseableEmitTimes() {
