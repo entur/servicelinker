@@ -102,6 +102,11 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
+// Pin the boot jar name so the Docker COPY targets one exact file, immune to stale artifacts.
+tasks.bootJar {
+    archiveFileName.set("app.jar")
+}
+
 // Local development defaults for bootRun — emulators + .env OSRM overrides
 tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
     environment("SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST", "localhost:8085")

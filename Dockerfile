@@ -1,16 +1,13 @@
-FROM bellsoft/liberica-runtime-container:jre-25-musl
+FROM gcr.io/distroless/java25-debian13:nonroot
 
-# hadolint ignore=DL3018
-RUN apk upgrade --no-cache
-
-WORKDIR /srv
-COPY build/libs/*.jar app.jar
-RUN chown -R 1000:1000 /srv
-USER 1000:1000
+WORKDIR /app
+COPY build/libs/app.jar app.jar
 
 EXPOSE 8080
+# Distroless has no shell, so exec form only. The base image sets ENTRYPOINT ["java", "-jar"],
+# which would swallow the JVM flags, so override it with the full command.
 ENTRYPOINT ["java", \
   "-XX:MaxRAMPercentage=65.0", \
   "-XX:+UseG1GC", \
   "-XX:+ExitOnOutOfMemoryError", \
-  "-jar", "./app.jar"]
+  "-jar", "app.jar"]
