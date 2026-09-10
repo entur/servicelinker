@@ -1,7 +1,6 @@
 common:
   app: servicelinker
-  replicas: 2
-  shortname: servicelnk # Defined in https://github.com/entur/ror-tf-gcp-common-infrastructure/blob/main/.entur/servicelinker/app-servicelinker.yml
+  appId: servicelnk # Defined in https://github.com/entur/ror-tf-gcp-common-infrastructure/blob/main/.entur/servicelinker/app-servicelinker.yml
   team: team-ror
   ingress:
     enabled: false
@@ -9,11 +8,12 @@ common:
   service:
     internalPort: 8080  # What TCP port the application listens on the pod, must match the port in the Dockerfile
   deployment:
+    forceReplicas: 2  # fixed 2 (was v1 `replicas: 2`); batch producer, no CPU autoscaling
     prometheus:
       enabled: true
   container:
     image: <+artifacts.primary.image>  # The CD tool will replace this value with the actual image
     cpu: 1.0 # XML processing and G1 GC need headroom to avoid CFS throttling
-    memory: 2048 # This is request mem. Limit is 20% higher
+    memory: 2458 # request==limit in v2; keeps the v1 hard limit (was 1.2x2048)
   postgres: # sets up a postgres proxy so you can connect to your postgresql instance via localhost on the pod
     enabled: false

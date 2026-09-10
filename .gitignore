@@ -51,3 +51,6 @@ processed.xml
 
 /terraform/.terraform
 /terraform/.terraform.lock.hcl
+
+### Helm vendored subcharts (Chart.lock is committed) ###
+helm/*/charts/
