@@ -37,6 +37,21 @@ class NetexProcessorTest {
         netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor(), ServicelinkerMetrics(SimpleMeterRegistry()))
     }
 
+    private fun posListOfNewLink(processedXml: ByteArray): List<Double> {
+        val doc = parseXmlFromBytes(processedXml)
+        val newLink =
+            (0 until doc.getElementsByTagName("ServiceLink").length)
+                .map { doc.getElementsByTagName("ServiceLink").item(it) as Element }
+                .first { it.getAttribute("id") == "FIN:ServiceLink:2-3" }
+        return newLink
+            .getElementsByTagNameNS("http://www.opengis.net/gml/3.2", "posList")
+            .item(0)
+            .textContent
+            .trim()
+            .split("\\s+".toRegex())
+            .map { it.toDouble() }
+    }
+
     private fun getSampleNetexBytes(): ByteArray =
         requireNotNull(javaClass.getResourceAsStream("/sample-netex.xml")) {
             "sample-netex.xml not found in test resources"
@@ -1181,6 +1196,93 @@ class NetexProcessorTest {
             // Last pair should be stop 3 coords (60.1450, 11.1740), not OSRM-snapped (60.140, 11.170)
             assertEquals(60.1450, posList[4], 0.0001, "Last lat should be stop 3 latitude, not OSRM-snapped")
             assertEquals(11.1740, posList[5], 0.0001, "Last lon should be stop 3 longitude, not OSRM-snapped")
+        }
+
+    @Test
+    fun `posList should be simplified but keep the OSRM distance`() =
+        runTest {
+            // A dense OSRM geometry between the two stops: 200 interpolated points on the straight
+            // line, with one real bend ~200 m off it. Only the bend carries shape information.
+            val from = Coordinate(59.9556, 11.0464)
+            val to = Coordinate(60.1450, 11.1740)
+            val dense =
+                (0..200).map { i ->
+                    val f = i / 200.0
+                    Coordinate(
+                        from.latitude.toDouble() + f * (to.latitude.toDouble() - from.latitude.toDouble()),
+                        from.longitude.toDouble() + f * (to.longitude.toDouble() - from.longitude.toDouble()),
+                    )
+                }
+            val bend = Coordinate(dense[100].latitude.toDouble() + 0.002, dense[100].longitude.toDouble())
+            val osrmCoords = dense.take(100) + bend + dense.drop(100)
+            mockOsrmWithRoute(osrmCoords, 25000.0)
+
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexBytes())
+            assertEquals(1, addedCount)
+
+            val doc = parseXmlFromBytes(processedXml)
+            val newLink =
+                (0 until doc.getElementsByTagName("ServiceLink").length)
+                    .map { doc.getElementsByTagName("ServiceLink").item(it) as Element }
+                    .first { it.getAttribute("id") == "FIN:ServiceLink:2-3" }
+
+            val posList =
+                newLink
+                    .getElementsByTagNameNS("http://www.opengis.net/gml/3.2", "posList")
+                    .item(0)
+                    .textContent
+                    .trim()
+                    .split("\\s+".toRegex())
+                    .map { it.toDouble() }
+
+            assertTrue(
+                posList.size / 2 < osrmCoords.size / 10,
+                "Collinear points should be dropped, got ${posList.size / 2} of ${osrmCoords.size} pairs",
+            )
+            assertEquals(59.9556, posList[0], 0.0001, "First pair must stay at the from-stop")
+            assertEquals(11.0464, posList[1], 0.0001, "First pair must stay at the from-stop")
+            assertEquals(60.1450, posList[posList.size - 2], 0.0001, "Last pair must stay at the to-stop")
+            assertEquals(11.1740, posList[posList.size - 1], 0.0001, "Last pair must stay at the to-stop")
+            assertTrue(
+                posList.chunked(2).any { (lat, _) -> kotlin.math.abs(lat - bend.latitude.toDouble()) < 0.0001 },
+                "The bend must survive simplification",
+            )
+
+            // Distance comes from OSRM, not from the shortened polyline
+            assertEquals(
+                "25000",
+                newLink.getElementsByTagName("Distance").item(0).textContent,
+            )
+        }
+
+    @Test
+    fun `long routes are simplified more aggressively than short ones`() =
+        runTest {
+            // Same geometry, two reported route lengths. The tolerance scales with the route's own
+            // length, so the long one keeps fewer points - otherwise a 700 km coach leg would carry
+            // thousands of them.
+            val wiggly =
+                (0..400).map { i ->
+                    val f = i / 400.0
+                    Coordinate(
+                        59.9556 + f * (60.1450 - 59.9556) + kotlin.math.sin(f * 60) * 0.00003,
+                        11.0464 + f * (11.1740 - 11.0464),
+                    )
+                }
+
+            mockOsrmWithRoute(wiggly, 20_000.0)
+            val shortPosList = posListOfNewLink(netexProcessor.processNetexFile(getSampleNetexBytes()).outputBytes)
+
+            mockOsrmWithRoute(wiggly, 600_000.0)
+            val longPosList = posListOfNewLink(netexProcessor.processNetexFile(getSampleNetexBytes()).outputBytes)
+
+            assertTrue(
+                longPosList.size < shortPosList.size,
+                "600 km route should keep fewer points than a 20 km one, got ${longPosList.size} vs ${shortPosList.size}",
+            )
+            // Endpoints survive at every tolerance
+            assertEquals(59.9556, longPosList[0], 0.0001)
+            assertEquals(60.1450, longPosList[longPosList.size - 2], 0.0001)
         }
 
     @Test

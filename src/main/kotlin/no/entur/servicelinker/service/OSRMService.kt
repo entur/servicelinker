@@ -24,7 +24,7 @@ data class OsrmProperties(
     val urls: Map<String, String> = emptyMap(),
     val timeout: Long = 30000,
     val cacheRoutes: Boolean = true,
-    val cacheMaxSize: Int = 40_000,
+    val cacheMaxGeometryBytes: Long = 80_000_000,
     val cacheTtlHours: Int = 24,
 )
 
@@ -35,11 +35,14 @@ class OSRMService(
     private val logger = LoggerFactory.getLogger(OSRMService::class.java)
     private val webClients = ConcurrentHashMap<String, WebClient>()
 
-    // LRU cache: ~2 KB avg per entry (polyline geometry), 40k entries ≈ 80 MB; entries expire after 24h
+    // LRU cache bounded by encoded geometry size rather than entry count: a route's polyline
+    // ranges from a few hundred bytes for an urban hop to ~150 KB for a cross-country coach leg,
+    // so an entry count is not a usable proxy for memory. Entries expire after 24h.
     private val routeCache: Cache<String, OSRMRoute> =
         Caffeine
             .newBuilder()
-            .maximumSize(osrmProperties.cacheMaxSize.toLong())
+            .maximumWeight(osrmProperties.cacheMaxGeometryBytes)
+            .weigher<String, OSRMRoute> { _, route -> route.geometryLength }
             .expireAfterWrite(osrmProperties.cacheTtlHours.toLong(), TimeUnit.HOURS)
             .build()
 
@@ -97,16 +100,18 @@ class OSRMService(
             val webClient = getWebClient(baseUrl)
             val coordinates = "$from;$to"
 
-            val overview = if (from.haversineDistanceTo(to) > SIMPLIFIED_THRESHOLD_METERS) "simplified" else "full"
-            logger.debug("Calculating route from $from to $to using OSRM at $baseUrl (mode: $modeKey, overview: $overview)")
+            logger.debug("Calculating route from $from to $to using OSRM at $baseUrl (mode: $modeKey)")
 
+            // Always ask for the full geometry. OSRM's own `overview=simplified` targets a roughly
+            // constant point count regardless of route length, which costs 2-3 km of accuracy on a
+            // long leg; we simplify ourselves instead, to a tolerance we control.
             val response =
                 webClient
                     .get()
                     .uri(
-                        "/route/v1/driving/{coordinates}?alternatives=false&steps=false&overview={overview}&geometries=polyline",
+                        "/route/v1/driving/{coordinates}?alternatives=false&steps=false&overview=full&geometries=polyline",
                     ) { uriBuilder ->
-                        uriBuilder.build(coordinates, overview)
+                        uriBuilder.build(coordinates)
                     }.retrieve()
                     .awaitBody<OSRMResponse>()
 
@@ -151,7 +156,6 @@ class OSRMService(
     fun getCacheSize(): Long = routeCache.estimatedSize()
 
     companion object {
-        const val SIMPLIFIED_THRESHOLD_METERS = 30_000.0
         const val MAX_LOGGED_ERROR_BODY = 500
     }
 }

@@ -15,6 +15,7 @@ import no.entur.servicelinker.model.StationPair
 import no.entur.servicelinker.model.StopPoint
 import no.entur.servicelinker.model.TransportMode
 import no.entur.servicelinker.plugins.MetadataExtractor
+import no.entur.servicelinker.util.DouglasPeucker
 import org.entur.netex.tools.lib.config.FilterConfig
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
@@ -262,18 +263,22 @@ class NetexProcessor(
         val timestamp = TIMESTAMP_FORMAT.format(java.time.LocalDateTime.now())
         val serviceLinkId = computeServiceLinkId(pair)
 
-        val fromCoord = listOf(pair.from.coordinate.longitude, pair.from.coordinate.latitude)
-        val toCoord = listOf(pair.to.coordinate.longitude, pair.to.coordinate.latitude)
+        val fromCoord = pair.from.coordinate
+        val toCoord = pair.to.coordinate
+        val osrmPath = route?.path.orEmpty()
         val coordinates =
-            if (route != null) {
-                val osrmCoords = route.coordinates.toMutableList()
+            if (osrmPath.size >= 2) {
+                val osrmCoords = osrmPath.toMutableList()
                 osrmCoords[0] = fromCoord
                 osrmCoords[osrmCoords.lastIndex] = toCoord
-                osrmCoords
+                // OSRM emits a point per road geometry node, and most of them are collinear with
+                // their neighbours: they carry no shape information and only bloat the NeTEx output.
+                // Simplify after snapping the endpoints, so the tolerance holds for what we emit.
+                DouglasPeucker.simplify(osrmCoords, simplifyToleranceMeters(route?.distance))
             } else {
                 listOf(fromCoord, toCoord)
             }
-        val posListString = coordinates.joinToString(" ") { coord -> "${coord[1]} ${coord[0]}" }
+        val posListString = coordinates.joinToString(" ") { coord -> "${coord.latitude} ${coord.longitude}" }
 
         // Fall back to haversine when OSRM didn't provide a route — antu's geometry plausibility
         // checks expect Distance, and a NeTEx ServiceLink without it is structurally complete but
@@ -391,6 +396,22 @@ class NetexProcessor(
     companion object {
         /** Synthetic document name used when processing a single XML stream via the plugin extractor. */
         const val SINGLE_DOC_NAME = "input.xml"
+
+        /** Floor for the ServiceLink geometry tolerance, at or below the precision OSRM reports. */
+        private const val MIN_SIMPLIFY_TOLERANCE_METERS = 1.0
+
+        /**
+         * Geometry is simplified to 1 part in [SIMPLIFY_RATIO] of the route's own length, with a
+         * [MIN_SIMPLIFY_TOLERANCE_METERS] floor. A fixed 1 m tolerance keeps a share of points that
+         * grows with route length, so a 700 km coach leg would carry ~9000 of them; tying the
+         * tolerance to the length instead holds every link to roughly a thousand points, and keeps
+         * the error a constant fraction of what is drawn - well under a pixel at the zoom where the
+         * whole link is on screen.
+         */
+        private const val SIMPLIFY_RATIO = 20_000.0
+
+        private fun simplifyToleranceMeters(routeDistanceMeters: Double?): Double =
+            maxOf(MIN_SIMPLIFY_TOLERANCE_METERS, (routeDistanceMeters ?: 0.0) / SIMPLIFY_RATIO)
 
         /**
          * Verify every consecutive stop pair in every JourneyPattern has a resolvable ServiceLink.

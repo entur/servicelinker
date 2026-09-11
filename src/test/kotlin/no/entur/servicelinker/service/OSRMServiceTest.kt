@@ -99,16 +99,15 @@ class OSRMServiceTest {
             assertEquals(20842.6, route.distance)
             assertEquals(1341.1, route.duration)
 
-            assertNotNull(route.coordinates)
-            assertTrue(route.coordinates.isNotEmpty())
+            assertTrue(route.path.isNotEmpty())
 
-            val firstCoordinate = route.coordinates.first()
-            val lastCoordinate = route.coordinates.last()
+            val firstCoordinate = route.path.first()
+            val lastCoordinate = route.path.last()
 
-            assertTrue((firstCoordinate[0].toDouble() - 10.75261) < 0.0001) { "Expected longitude ~10.75261, got ${firstCoordinate[0]}" }
-            assertTrue((firstCoordinate[1].toDouble() - 59.913953) < 0.0001) { "Expected latitude ~59.913953, got ${firstCoordinate[1]}" }
-            assertTrue((lastCoordinate[0].toDouble() - 11.046175) < 0.0001) { "Expected longitude ~11.046175, got ${lastCoordinate[0]}" }
-            assertTrue((lastCoordinate[1].toDouble() - 59.955648) < 0.0001) { "Expected latitude ~59.955648, got ${lastCoordinate[1]}" }
+            assertTrue((firstCoordinate.longitude.toDouble() - 10.75261) < 0.0001) { "Expected longitude ~10.75261, got ${firstCoordinate.longitude}" }
+            assertTrue((firstCoordinate.latitude.toDouble() - 59.913953) < 0.0001) { "Expected latitude ~59.913953, got ${firstCoordinate.latitude}" }
+            assertTrue((lastCoordinate.longitude.toDouble() - 11.046175) < 0.0001) { "Expected longitude ~11.046175, got ${lastCoordinate.longitude}" }
+            assertTrue((lastCoordinate.latitude.toDouble() - 59.955648) < 0.0001) { "Expected latitude ~59.955648, got ${lastCoordinate.latitude}" }
 
             busWireMock.verify(
                 getRequestedFor(urlPathMatching("/route/v1/driving/.*")),
@@ -232,6 +231,24 @@ class OSRMServiceTest {
             stubOsrmResponse(busWireMock)
             osrmService.calculateRoute(oslo, lillestrøm, null)
             busWireMock.verify(1, getRequestedFor(urlPathMatching("/route/v1/driving/.*")))
+        }
+
+    @Test
+    fun `should always request the full geometry, whatever the distance`() =
+        runTest {
+            stubOsrmResponse(busWireMock)
+
+            // OSRM's own overview=simplified targets a near-constant point count, so a long leg
+            // comes back kilometres off the road. We ask for everything and simplify ourselves.
+            val kirkenes = Coordinate(69.7269, 30.0454)
+            osrmService.calculateRoute(oslo, lillestrøm, TransportMode.BUS)
+            osrmService.calculateRoute(oslo, kirkenes, TransportMode.BUS)
+
+            busWireMock.verify(
+                2,
+                getRequestedFor(urlPathMatching("/route/v1/driving/.*"))
+                    .withQueryParam("overview", equalTo("full")),
+            )
         }
 
     @Test

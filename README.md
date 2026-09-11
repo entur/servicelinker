@@ -10,6 +10,7 @@ A Spring Boot application that reads Nordic Profile NeTEx files and adds missing
 - Adds ServiceLinkInJourneyPattern references (linksInSequence) to each JourneyPattern
 - Uses transport mode-specific OSRM instances for accurate routing (bus, rail, ferry, water)
 - Adds ServiceLinks with route geometry (GML LineString) and distances
+- Simplifies route geometry with Ramer-Douglas-Peucker, at 1 m or 1/20000 of the route length, whichever is larger; distances come from the unsimplified OSRM route
 - Preserves existing ServiceLinks (no overwrites)
 - Handles ZIP archives: processes all XML files, preserves non-XML entries
 - Event-driven via PubSub (inbound trigger, outbound completion)

@@ -1,9 +1,8 @@
 package no.entur.servicelinker.model
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.annotation.JsonProperty
 import no.entur.servicelinker.util.PolylineEncoding
-import java.math.BigDecimal
 
 data class OSRMResponse(
     val routes: List<OSRMRoute>,
@@ -15,9 +14,14 @@ data class OSRMRoute(
     val duration: Double,
     private val geometry: String,
 ) {
-    @get:JsonProperty(access = JsonProperty.Access.READ_ONLY)
-    val coordinates: List<List<BigDecimal>>
-        get() = PolylineEncoding.decode(geometry).map { listOf(it.longitude, it.latitude) }
+    /** The decoded geometry, in route order. */
+    @get:JsonIgnore
+    val path: List<Coordinate> by lazy { PolylineEncoding.decode(geometry) }
+
+    /** Encoded size, used to weigh the route cache without decoding the geometry. */
+    @get:JsonIgnore
+    val geometryLength: Int
+        get() = geometry.length
 }
 
 data class DirectProcessingResult(
