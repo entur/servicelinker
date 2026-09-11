@@ -2,6 +2,7 @@ package no.entur.servicelinker.util
 
 import no.entur.servicelinker.model.Coordinate
 import java.lang.Character.toChars
+import java.math.BigDecimal
 
 /**
  * See https://developers.google.com/maps/documentation/utilities/polylinealgorithm for details
@@ -14,7 +15,6 @@ object PolylineEncoding {
         var index = 0
         var lat = 0L
         var lng = 0L
-        val doubleShift = 1e-5
 
         while (index < len) {
             var result = 1
@@ -36,10 +36,16 @@ object PolylineEncoding {
             } while (b >= 0x1f)
             lng += if ((result and 1) != 0) (result shr 1).inv() else (result shr 1)
 
-            path.add(Coordinate(lat * doubleShift, lng * doubleShift))
+            // Scale the integers directly instead of multiplying by 1e-5: the double route leaves
+            // binary noise (59.91395000000001) that BigDecimal then preserves all the way into the
+            // NeTEx posList, for roughly 60% more bytes and not one bit more precision.
+            path.add(Coordinate(BigDecimal.valueOf(lat, PRECISION), BigDecimal.valueOf(lng, PRECISION)))
         }
         return path
     }
+
+    /** Polyline5: coordinates live on a 1e-5 degree grid. */
+    private const val PRECISION = 5
 
     fun encode(path: List<Coordinate>): String {
         var lastLat = 0L

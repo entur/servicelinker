@@ -11,6 +11,20 @@ class PolylineEncodingTest {
     private val MAX_DIFF = 0.00001.toBigDecimal()
 
     @Test
+    fun `decoded coordinates carry no floating point noise`() {
+        // Straight from the polyline5 grid: five decimals, exactly. Multiplying by 1e-5 in double
+        // yields 59.91395000000001, which BigDecimal preserves into the NeTEx posList.
+        val objectMapper = ObjectMapper()
+        val polylineJson = objectMapper.readTree(File("src/test/resources/sample-osrm-polyline.json"))
+        val decoded = PolylineEncoding.decode(polylineJson["routes"][0]["geometry"].asText())
+
+        decoded.forEach { coordinate ->
+            assertEquals(5, coordinate.latitude.scale(), "Unexpected scale in ${coordinate.latitude}")
+            assertEquals(5, coordinate.longitude.scale(), "Unexpected scale in ${coordinate.longitude}")
+        }
+    }
+
+    @Test
     fun testEncodeDecode() {
         val objectMapper = ObjectMapper()
 
