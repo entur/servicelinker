@@ -34,6 +34,10 @@ docker-compose up --build # full local stack with emulators
 ## Key Conventions
 
 - NeTEx files must always follow the Nordic NeTEx profile
+- ServiceLink geometry: always request `overview=full` from OSRM and simplify with Ramer-Douglas-Peucker
+  at `max(1 m, route length / 20000)`. OSRM's own `overview=simplified` targets a near-constant point
+  count, so a 485 km leg came back as 25 points up to 2.7 km off the road. Simplify after snapping the
+  endpoints to the stop coordinates, never before, or the tolerance no longer bounds what is emitted.
 - Spring profiles activated by `COMMON_ENV` env var: `dev`, `tst`, `prd`
 - PubSub topics/subscriptions are in Marduk's GCP project (`ent-marduk-*`), subscriptions in Servicelinker's project (`ent-servicelnk-*`)
 - Outbound topic config must use full path (`projects/ent-marduk-{env}/topics/...`) for cross-project publishing
