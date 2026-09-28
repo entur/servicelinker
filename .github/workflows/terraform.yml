@@ -13,12 +13,12 @@ on:
 
 jobs:
   terraform-lint:
-    uses: entur/gha-terraform/.github/workflows/lint.yml@v2
+    uses: entur/gha-terraform/.github/workflows/lint.yml@v3
 
   tf-plan-dev:
     needs: terraform-lint
     name: Terraform Plan DEV
-    uses: entur/gha-terraform/.github/workflows/plan.yml@v2
+    uses: entur/gha-terraform/.github/workflows/plan.yml@v3
     with:
       environment: dev
 
@@ -26,7 +26,7 @@ jobs:
     if: github.event_name == 'push'
     needs: [tf-plan-dev]
     name: Terraform Apply DEV
-    uses: entur/gha-terraform/.github/workflows/apply.yml@v2
+    uses: entur/gha-terraform/.github/workflows/apply.yml@v3
     with:
       environment: dev
       has_changes: ${{ needs.tf-plan-dev.outputs.has_changes }}
@@ -35,7 +35,7 @@ jobs:
     needs: [tf-apply-dev]
     if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') }}
     name: Terraform Plan TST
-    uses: entur/gha-terraform/.github/workflows/plan.yml@v2
+    uses: entur/gha-terraform/.github/workflows/plan.yml@v3
     with:
       environment: tst
 
@@ -54,7 +54,7 @@ jobs:
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     needs: [approval-tst, tf-plan-tst]
     name: Terraform Apply TST
-    uses: entur/gha-terraform/.github/workflows/apply.yml@v2
+    uses: entur/gha-terraform/.github/workflows/apply.yml@v3
     with:
       environment: tst
       has_changes: ${{ needs.tf-plan-tst.outputs.has_changes }}
@@ -63,7 +63,7 @@ jobs:
     needs: [tf-apply-tst]
     if: ${{ github.event_name == 'push' && !cancelled() && !contains(needs.*.result, 'failure') }}
     name: Terraform Plan PRD
-    uses: entur/gha-terraform/.github/workflows/plan.yml@v2
+    uses: entur/gha-terraform/.github/workflows/plan.yml@v3
     with:
       environment: prd
 
@@ -82,7 +82,7 @@ jobs:
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     needs: [approval-prd, tf-plan-prd]
     name: Terraform Apply PRD
-    uses: entur/gha-terraform/.github/workflows/apply.yml@v2
+    uses: entur/gha-terraform/.github/workflows/apply.yml@v3
     with:
       environment: prd
       has_changes: ${{ needs.tf-plan-prd.outputs.has_changes }}
