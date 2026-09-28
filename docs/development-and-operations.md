@@ -693,3 +693,27 @@ through unchanged. Empty ZIPs produce empty output ZIPs.
 
 **Messages not being processed:** Check that the inbound subscription name matches what the app is configured to listen on. Verify with
 `kubectl logs` that the `PubSubInboundChannelAdapter` started successfully. Look for the log line: `started bean 'inboundChannelAdapter'`.
+
+**Pod restarts (OOMKilled):** The pod was OOMKilled once a day near midnight in all three envs, coinciding with the nightly peak
+load. Confirm with:
+
+```bash
+kubectl -n servicelinker describe pod -l app=servicelinker | grep -A5 "Last State"
+```
+
+`Reason: OOMKilled` / `Exit Code: 137` is a cgroup kill by the kernel. There was no Java `OutOfMemoryError` in the logs despite
+`-XX:+ExitOnOutOfMemoryError`, so the heap never hit `-Xmx` before the kill -- total RSS crossed the limit. That alone does not
+identify which category overflowed: it could be off-heap growth, or heap-within-`-Xmx` plus normal native overhead summing past the
+limit. The leading hypothesis is native/off-heap -- grpc-netty allocates direct buffers (it logs `sun.misc.Unsafe::allocateMemory`
+at startup) -- but that is unconfirmed; the startup log proves the API is used, not that the allocation is excessive.
+
+The chart forces `request == limit` (Guaranteed QoS), so the only levers are the container memory limit
+(`common.container.memory` in `values.yaml`) and the JVM's heap/native split (`-XX:MaxRAMPercentage`, `-XX:MaxDirectMemorySize` in
+the `Dockerfile`); the two files are tuned together, keep them in sync. Raising the limit is a mitigation, not a proven fix -- if
+OOMKills recur *later in the day* rather than stopping, it's a slow leak, not the nightly peak, and more headroom only delays it.
+
+`MaxDirectMemorySize` also acts as the confirmation probe: it caps the direct buffers, so if they are the culprit their exhaustion
+now throws `OutOfMemoryError: Direct buffer memory` (which `-XX:+ExitOnOutOfMemoryError` then turns into a JVM exit) instead of a
+silent exit 137 -- kills that convert to that OOME confirm the hypothesis, kills that stay silent 137 refute it. Whether a stack
+trace is logged depends on the thread's uncaught-exception handler, not on the exit flag. (`-XX:NativeMemoryTracking` does not help
+here: it only prints on graceful exit, and a cgroup OOMKill is SIGKILL.)

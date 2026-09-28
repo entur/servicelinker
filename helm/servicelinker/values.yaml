@@ -14,6 +14,6 @@ common:
   container:
     image: <+artifacts.primary.image>  # The CD tool will replace this value with the actual image
     cpu: 1.0 # XML processing and G1 GC need headroom to avoid CFS throttling
-    memory: 2458 # request==limit in v2; keeps the v1 hard limit (was 1.2x2048)
+    memory: 3277 # request==limit; raised from 2458 to mitigate nightly OOMKills (suspected native/off-heap growth), 1.6x2048. Paired with MaxRAMPercentage/MaxDirectMemorySize in Dockerfile -- keep in sync
   postgres: # sets up a postgres proxy so you can connect to your postgresql instance via localhost on the pod
     enabled: false
