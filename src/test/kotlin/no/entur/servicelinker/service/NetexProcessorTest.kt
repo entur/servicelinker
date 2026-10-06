@@ -266,6 +266,56 @@ class NetexProcessorTest {
         }
 
     @Test
+    fun `pair under 1 km is exempt from the detour check`() =
+        runTest {
+            // ~560 m apart, 7 km route
+            mockOsrmWithRoute(listOf(oslo, Coordinate(59.9139, 10.7622)), 7_000.0)
+
+            val xml =
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+                    <dataObjects>
+                        <CompositeFrame id="TST:CompositeFrame:1" version="1">
+                            <frames>
+                                <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                                    <scheduledStopPoints>
+                                        <ScheduledStopPoint id="TST:ScheduledStopPoint:A" version="1">
+                                            <Name>Stop A</Name>
+                                            <Location><Longitude>10.7522</Longitude><Latitude>59.9139</Latitude></Location>
+                                        </ScheduledStopPoint>
+                                        <ScheduledStopPoint id="TST:ScheduledStopPoint:B" version="1">
+                                            <Name>Stop B</Name>
+                                            <Location><Longitude>10.7622</Longitude><Latitude>59.9139</Latitude></Location>
+                                        </ScheduledStopPoint>
+                                    </scheduledStopPoints>
+                                    <journeyPatterns>
+                                        <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                                            <pointsInSequence>
+                                                <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:1" version="1" order="1">
+                                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:A" version="1"/>
+                                                </StopPointInJourneyPattern>
+                                                <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:2" version="1" order="2">
+                                                    <ScheduledStopPointRef ref="TST:ScheduledStopPoint:B" version="1"/>
+                                                </StopPointInJourneyPattern>
+                                            </pointsInSequence>
+                                        </JourneyPattern>
+                                    </journeyPatterns>
+                                </ServiceFrame>
+                            </frames>
+                        </CompositeFrame>
+                    </dataObjects>
+                </PublicationDelivery>
+                """.trimIndent()
+
+            val (processedXml, _) = netexProcessor.processNetexFile(xml.toByteArray())
+
+            val distance = parseXmlFromBytes(processedXml).getElementsByTagName("Distance").item(0).textContent.trim()
+            assertEquals("7000", distance)
+            assertTrue(registry.find("servicelinker.servicelink.straight_line").counters().isEmpty())
+        }
+
+    @Test
     fun `should extract correct stop point information from sample file`() =
         runTest {
             val inputBytes = getSampleNetexBytes()

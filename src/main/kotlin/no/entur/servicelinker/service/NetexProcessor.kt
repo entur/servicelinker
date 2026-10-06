@@ -632,7 +632,7 @@ class NetexProcessor(
 
         private const val MAX_DETOUR_RATIO = 10.0
 
-        private const val MIN_DETOUR_CHECK_DIRECT_METERS = 500.0
+        private const val MIN_DETOUR_CHECK_DIRECT_METERS = 1000.0
 
         /** Matches `gml` when used as an XML namespace prefix — in declarations,
          *  element tags, or namespace-qualified attributes. Single-pass replacement. */
