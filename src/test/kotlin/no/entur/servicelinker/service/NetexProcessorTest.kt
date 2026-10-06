@@ -22,6 +22,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 class NetexProcessorTest {
     private lateinit var mockOsrmService: OSRMService
     private lateinit var netexProcessor: NetexProcessor
+    private lateinit var registry: SimpleMeterRegistry
 
     val oslo = Coordinate(59.9139, 10.7522)
     val lillestrøm = Coordinate(59.9556, 11.0464)
@@ -34,7 +35,8 @@ class NetexProcessorTest {
     @BeforeEach
     fun setup() {
         mockOsrmService = mockk(relaxed = true)
-        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor(), ServicelinkerMetrics(SimpleMeterRegistry()))
+        registry = SimpleMeterRegistry()
+        netexProcessor = NetexProcessor(mockOsrmService, MetadataExtractor(), ServicelinkerMetrics(registry))
     }
 
     private fun posListOfNewLink(processedXml: ByteArray): List<Double> {
@@ -50,6 +52,15 @@ class NetexProcessorTest {
             .trim()
             .split("\\s+".toRegex())
             .map { it.toDouble() }
+    }
+
+    private fun distanceOfNewLink(processedXml: ByteArray): Int {
+        val doc = parseXmlFromBytes(processedXml)
+        val newLink =
+            (0 until doc.getElementsByTagName("ServiceLink").length)
+                .map { doc.getElementsByTagName("ServiceLink").item(it) as Element }
+                .first { it.getAttribute("id") == "FIN:ServiceLink:2-3" }
+        return newLink.getElementsByTagName("Distance").item(0).textContent.trim().toInt()
     }
 
     private fun getSampleNetexBytes(): ByteArray =
@@ -221,6 +232,37 @@ class NetexProcessorTest {
             val (_, addedCount) = netexProcessor.processNetexFile(getSampleNetexBytes())
 
             assertEquals(1, addedCount, "Straight-line fallback should still produce one SL for the new pair")
+        }
+
+    @Test
+    fun `route more than 10x the direct distance falls back to straight line`() =
+        runTest {
+            // Pair 2→3 is ~22 km direct
+            mockOsrmWithRoute(osloToBergenCoords, 250_000.0)
+
+            val (processedXml, addedCount) = netexProcessor.processNetexFile(getSampleNetexBytes())
+
+            assertEquals(1, addedCount)
+            assertTrue(distanceOfNewLink(processedXml) < 25_000)
+            assertEquals(
+                1.0,
+                registry
+                    .find("servicelinker.servicelink.straight_line")
+                    .tag("reason", "implausible-detour")
+                    .counter()
+                    ?.count(),
+            )
+        }
+
+    @Test
+    fun `route within 10x the direct distance is kept`() =
+        runTest {
+            mockOsrmWithRoute(osloToBergenCoords, 200_000.0)
+
+            val (processedXml, _) = netexProcessor.processNetexFile(getSampleNetexBytes())
+
+            assertEquals(200_000, distanceOfNewLink(processedXml))
+            assertTrue(registry.find("servicelinker.servicelink.straight_line").counters().isEmpty())
         }
 
     @Test
@@ -1273,12 +1315,12 @@ class NetexProcessorTest {
             mockOsrmWithRoute(wiggly, 20_000.0)
             val shortPosList = posListOfNewLink(netexProcessor.processNetexFile(getSampleNetexBytes()).outputBytes)
 
-            mockOsrmWithRoute(wiggly, 600_000.0)
+            mockOsrmWithRoute(wiggly, 200_000.0)
             val longPosList = posListOfNewLink(netexProcessor.processNetexFile(getSampleNetexBytes()).outputBytes)
 
             assertTrue(
                 longPosList.size < shortPosList.size,
-                "600 km route should keep fewer points than a 20 km one, got ${longPosList.size} vs ${shortPosList.size}",
+                "200 km route should keep fewer points than a 20 km one, got ${longPosList.size} vs ${shortPosList.size}",
             )
             // Endpoints survive at every tolerance
             assertEquals(59.9556, longPosList[0], 0.0001)
