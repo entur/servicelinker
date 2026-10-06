@@ -176,6 +176,21 @@ class NetexProcessor(
             meters.straightLineFallback(mode, "implausible-distance")
             return null
         }
+        // A route many times longer than the direct line usually means a stop snapped to the wrong
+        // road, e.g. across a fjord. Short pairs are exempt: loops and one-way streets inflate the ratio.
+        val direct = pair.from.coordinate.haversineDistanceTo(pair.to.coordinate)
+        if (direct >= MIN_DETOUR_CHECK_DIRECT_METERS && route.distance > MAX_DETOUR_RATIO * direct) {
+            logger.warn(
+                "OSRM route {}m is more than {}x the direct {}m for {} -> {}, using straight line",
+                route.distance,
+                MAX_DETOUR_RATIO,
+                direct.toInt(),
+                pair.from.id,
+                pair.to.id,
+            )
+            meters.straightLineFallback(mode, "implausible-detour")
+            return null
+        }
         return route
     }
 
@@ -614,6 +629,10 @@ class NetexProcessor(
 
         /** Default sanity limit (5000 km) — override via `servicelinker.max-route-distance-meters`. */
         private const val MAX_ROUTE_DISTANCE_METERS_DEFAULT: Long = 5_000_000
+
+        private const val MAX_DETOUR_RATIO = 10.0
+
+        private const val MIN_DETOUR_CHECK_DIRECT_METERS = 1000.0
 
         /** Matches `gml` when used as an XML namespace prefix — in declarations,
          *  element tags, or namespace-qualified attributes. Single-pass replacement. */
