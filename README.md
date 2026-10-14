@@ -63,7 +63,7 @@ All configuration is via environment variables. Key settings:
 | `OSRM_URL_WATER` | `https://router.project-osrm.org` | OSRM instance for WATER |
 | `OSRM_URL_DEFAULT` | `https://router.project-osrm.org` | Fallback OSRM instance |
 
-See [docs/development-and-operations.md](docs/development-and-operations.md) for full configuration reference, local development setup, marduk integration details, and k8s deployment instructions.
+See [docs/development-and-operations.md](docs/development-and-operations.md) for full configuration reference, local development setup and marduk integration details.
 
 ## Transport Mode Routing
 

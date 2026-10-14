@@ -29,7 +29,7 @@ jobs:
         run: ./gradlew --no-daemon build
 
       - name: Archive Build Artifacts
-        if: success()
+        if: success() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: jar-artifact
@@ -37,19 +37,41 @@ jobs:
           retention-days: 1
           overwrite: true
 
+  # PRs only: on main, servicelinker-deployment-config builds and scans the
+  # image it deploys. Plain build because gha-docker's build.yml requires GCP
+  # credentials, which this repo does not have. The artifact layout matches
+  # what docker-scan expects (artifact `servicelinker` holding `servicelinker.tar`).
   docker-build:
     name: Docker Build
-    needs: [ gradle-build, lint ]
-    uses: entur/gha-docker/.github/workflows/build.yml@v1
-    with:
-      build_artifact_name: jar-artifact
-      build_artifact_path: build/libs
-
-  docker-push:
-    name: Docker Push
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
-    needs: docker-build
-    uses: entur/gha-docker/.github/workflows/push.yml@v1
+    if: github.event_name == 'pull_request'
+    needs: [gradle-build, lint]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      image_artifact: servicelinker
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: jar-artifact
+          path: build/libs
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          tags: servicelinker
+          outputs: type=docker,dest=/tmp/servicelinker.tar
+          push: false
+          provenance: false
+          cache-from: type=gha,ignore-error=true
+          cache-to: type=gha,mode=max,ignore-error=true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: servicelinker
+          path: /tmp/servicelinker.tar
+          retention-days: 1
 
   scan:
     needs: [docker-build]
@@ -57,65 +79,22 @@ jobs:
     with:
       image_artifact: ${{ needs.docker-build.outputs.image_artifact }}
 
-  deploy-dev:
-    name: Dev
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
-    needs: docker-push
-    uses: entur/gha-helm/.github/workflows/deploy.yml@v2
-    with:
-      environment: dev
-      image: ${{ needs.docker-push.outputs.image_name }}:${{ needs.docker-push.outputs.image_tag}}
-      chart: helm/servicelinker
-      namespace: servicelinker
-      release_name: servicelinker
-    secrets: inherit
-
-  approval-tst:
-    name: Staging Approval
-    if: ${{ github.ref == 'refs/heads/main' }}
-    needs: deploy-dev
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: Approve
+  # Build, push and deploy happen in entur/servicelinker-deployment-config.
+  trigger-deploy:
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository_owner == 'entur' }}
+    needs: [gradle-build, lint]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: deploy-trigger
+    permissions: {}
     steps:
-      - name: Manual approval
-        shell: bash
-        run: echo "Approve TST deployment"
-
-  deploy-tst:
-    name: Staging
-    if: ${{ github.ref == 'refs/heads/main' }}
-    needs: [docker-push, approval-tst]
-    uses: entur/gha-helm/.github/workflows/deploy.yml@v2
-    with:
-      environment: tst
-      image: ${{ needs.docker-push.outputs.image_name }}:${{ needs.docker-push.outputs.image_tag}}
-      chart: helm/servicelinker
-      namespace: servicelinker
-      release_name: servicelinker
-    secrets: inherit
-
-  approval-prd:
-    name: Prod Approval
-    if: ${{ github.ref == 'refs/heads/main' }}
-    needs: deploy-tst
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: Approve
-    steps:
-      - name: Manual approval
-        shell: bash
-        run: echo "Approve PRD deployment"
-
-  deploy-prd:
-    name: Prod
-    if: ${{ github.ref == 'refs/heads/main' }}
-    needs: [docker-push, approval-prd]
-    uses: entur/gha-helm/.github/workflows/deploy.yml@v2
-    with:
-      environment: prd
-      image: ${{ needs.docker-push.outputs.image_name }}:${{ needs.docker-push.outputs.image_tag}}
-      chart: helm/servicelinker
-      namespace: servicelinker
-      release_name: servicelinker
-    secrets: inherit
+      - env:
+          GH_TOKEN: ${{ secrets.DEPLOY_TRIGGER_TOKEN }}
+        # REST dispatch with an explicit ref: the token only has Actions access,
+        # which `gh workflow run`'s default-branch lookup can't use. A missing
+        # run link must not fail the job once the dispatch went through.
+        run: |
+          out=$(gh api -X POST repos/entur/servicelinker-deployment-config/actions/workflows/deploy.yml/dispatches \
+            -f ref=main -f "inputs[sha]=$GITHUB_SHA" -F return_run_details=true)
+          url=$(jq -r '.html_url // empty' <<<"$out" 2>/dev/null || true)
+          echo "Deploy run: ${url:-https://github.com/entur/servicelinker-deployment-config/actions/workflows/deploy.yml}" | tee -a "$GITHUB_STEP_SUMMARY"
