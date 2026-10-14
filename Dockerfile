@@ -11,7 +11,7 @@ EXPOSE 8080
 # grpc-netty direct buffers) inside the container limit. MaxDirectMemorySize caps those buffers, which
 # also acts as a probe: if they are the OOMKill culprit, exhaustion now throws OutOfMemoryError: Direct
 # buffer memory (which ExitOnOutOfMemoryError turns into a JVM exit) instead of a silent exit 137.
-# Tuned against common.container.memory in helm/servicelinker/values.yaml -- keep the two in sync.
+# Tuned against common.container.memory in the servicelinker-deployment-config helm chart -- keep the two in sync.
 ENTRYPOINT ["java", \
   "-XX:MaxRAMPercentage=58.0", \
   "-XX:MaxDirectMemorySize=768m", \
