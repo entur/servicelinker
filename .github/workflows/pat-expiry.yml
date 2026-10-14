@@ -1,6 +1,7 @@
 name: Deploy token expiry
 
 # Fails when DEPLOY_TRIGGER_TOKEN is rejected or expires within WARN_DAYS.
+# The token is shared with entur/geocoder and entur/poiman.
 # GitHub notifies whoever last changed the cron line.
 
 on:
@@ -31,12 +32,12 @@ jobs:
           fi
           expiry=$(grep -i '^github-authentication-token-expiration:' headers.txt | cut -d' ' -f2- | tr -d '\r')
           if [ -z "$expiry" ]; then
-            echo "::notice::DEPLOY_TRIGGER_TOKEN has no expiry"
+            echo "DEPLOY_TRIGGER_TOKEN has no expiry" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           days=$(( ($(date -d "$expiry" +%s) - $(date +%s)) / 86400 ))
-          echo "DEPLOY_TRIGGER_TOKEN expires $expiry ($days days)"
+          echo "DEPLOY_TRIGGER_TOKEN expires $expiry ($days days)" | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$days" -le "$WARN_DAYS" ]; then
-            echo "::error::DEPLOY_TRIGGER_TOKEN expires in $days days ($expiry). Create a new token and update the secret in environment deploy-trigger."
+            echo "::error::DEPLOY_TRIGGER_TOKEN expires in $days days ($expiry). Create a new token and update the secret in environment deploy-trigger, here and in entur/geocoder and entur/poiman."
             exit 1
           fi
