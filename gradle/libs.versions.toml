@@ -1,5 +1,5 @@
 [versions]
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 ktlint = "14.2.0"
 logstash-logback-encoder = "9.0"
 mockk = "1.14.11"
