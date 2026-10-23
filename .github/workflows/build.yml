@@ -11,7 +11,7 @@ concurrency:
 jobs:
   lint:
     name: Lint
-    uses: entur/gha-docker/.github/workflows/lint.yml@v1
+    uses: entur/gha-docker/.github/workflows/lint.yml@dcdc76ce2d251de20f35a92c566d8fe99036e03e # v1.13.0
 
   gradle-build:
     name: Build
@@ -19,9 +19,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: entur/ror-gha-workflows/.github/actions/gradle-cache@main
+      - uses: entur/ror-gha-workflows/.github/actions/gradle-cache@cd8dd047eb3a5d9497f46454a5c60315a62c6a66 # v1.2.2
         with:
           java-version: '25'
 
@@ -30,7 +30,7 @@ jobs:
 
       - name: Archive Build Artifacts
         if: success() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jar-artifact
           path: build/libs
@@ -52,13 +52,13 @@ jobs:
     outputs:
       image_artifact: servicelinker
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jar-artifact
           path: build/libs
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           tags: servicelinker
@@ -67,7 +67,7 @@ jobs:
           provenance: false
           cache-from: type=gha,ignore-error=true
           cache-to: type=gha,mode=max,ignore-error=true
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: servicelinker
           path: /tmp/servicelinker.tar
@@ -75,7 +75,7 @@ jobs:
 
   scan:
     needs: [docker-build]
-    uses: entur/gha-security/.github/workflows/docker-scan.yml@v2
+    uses: entur/gha-security/.github/workflows/docker-scan.yml@89ffce329b85b10d285defb50bb58c35227d4305 # v2.17.0
     with:
       image_artifact: ${{ needs.docker-build.outputs.image_artifact }}
 
