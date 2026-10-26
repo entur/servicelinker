@@ -1,4 +1,4 @@
-FROM gcr.io/distroless/java25-debian13:nonroot@sha256:f7ef4e6822a6f57b90cdc91ad19e7e02923f3f491eccda918fd0be012d3bd8ac
+FROM gcr.io/distroless/java25-debian13:nonroot@sha256:5d3177252775d4b01603470fe21c015393019089904f68724bd37242e4bc6e6d
 
 WORKDIR /app
 COPY build/libs/app.jar app.jar
