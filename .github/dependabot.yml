@@ -1,9 +1,25 @@
 # One PR per dependency so Freyja can assess and merge it (no groups).
 # 4 day cooldown, except for the Entur packages listed under exclude.
+# Same blocks in every repo: remove the ecosystems the repo does not use.
 version: 2
 updates:
+  - package-ecosystem: "github-actions"
+    directories: ["/", "/.github/actions/*"]
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Oslo"
+    open-pull-requests-limit: 100
+    cooldown:
+      default-days: 4
+      exclude: ["entur/*"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
   - package-ecosystem: "gradle"
-    directory: "/"
+    directories: ["/"]
     schedule:
       interval: "weekly"
       day: "monday"
@@ -18,7 +34,7 @@ updates:
       include: "scope"
 
   - package-ecosystem: "docker"
-    directory: "/"
+    directories: ["/", "/[!.]*"]
     schedule:
       interval: "weekly"
       day: "monday"
@@ -27,21 +43,6 @@ updates:
     open-pull-requests-limit: 100
     cooldown:
       default-days: 4
-    commit-message:
-      prefix: "chore"
-      include: "scope"
-
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-      timezone: "Europe/Oslo"
-    open-pull-requests-limit: 100
-    cooldown:
-      default-days: 4
-      exclude: ["entur/*"]
     commit-message:
       prefix: "chore"
       include: "scope"
