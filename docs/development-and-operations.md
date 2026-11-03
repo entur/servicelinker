@@ -501,7 +501,9 @@ almost always unresolved stop coordinates. The error message separates the two c
 
 Sustained 429s mean our own burst is the problem: marduk starts several codespaces within seconds, and `nsr.max-concurrent-requests`
 is per pod, so the cluster-wide ceiling is that times the replica count. Lower it (`NSR_MAX_CONCURRENT_REQUESTS`), stagger the
-codespace kickoff in marduk, or ask for a quota bump on the `entur-servicelinker` ET-Client-Name.
+codespace kickoff in marduk, or ask for a quota bump on the `entur-servicelinker` ET-Client-Name. Only stops on a pair that still
+needs a ServiceLink are looked up in NSR, so a dataset that already has all its links costs no NSR requests. Pairs outside the modes
+filter are still looked up: they get a straight-line ServiceLink, which needs both coordinates.
 
 **Metrics:** exposed on `/actuator/prometheus`, all tagged with `codespace`:
 

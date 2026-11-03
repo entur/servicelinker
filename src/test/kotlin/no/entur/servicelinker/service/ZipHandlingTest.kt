@@ -6,6 +6,8 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import no.entur.servicelinker.model.Coordinate
+import no.entur.servicelinker.model.IncompleteJourneyPatternException
+import no.entur.servicelinker.model.MissingPair
 import no.entur.servicelinker.model.OSRMRoute
 import no.entur.servicelinker.plugins.MetadataExtractor
 import no.entur.servicelinker.util.PolylineEncoding
@@ -20,6 +22,7 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -422,6 +425,201 @@ class ZipHandlingTest {
                 declaredIds.contains("TST:ScheduledStopPoint:B"),
                 "Stub for stop B should be injected so ScheduledStopPoint_KeyRef constraint is satisfied",
             )
+        }
+
+    private val quayCoordinates =
+        mapOf(
+            "NSR:Quay:A" to oslo,
+            "NSR:Quay:B" to lillestrøm,
+            "NSR:Quay:C" to Coordinate(59.7434, 10.2044),
+            "NSR:Quay:D" to Coordinate(60.1976, 11.1004),
+        )
+
+    /**
+     * One-file NeTEx with one JP over [sequence] on a [mode] line. Every stop has a
+     * PassengerStopAssignment to `NSR:Quay:<letter>` and no inline coordinates, and
+     * [linkedPairs] already have a ServiceLink.
+     */
+    private fun buildNsrBackedNetex(
+        sequence: List<String>,
+        linkedPairs: List<Pair<String, String>>,
+        mode: String = "bus",
+    ): ByteArray {
+        val stops =
+            sequence.distinct().joinToString("\n") {
+                """<ScheduledStopPoint id="TST:ScheduledStopPoint:$it" version="1"><Name>$it</Name></ScheduledStopPoint>"""
+            }
+        val assignments =
+            sequence.distinct().joinToString("\n") {
+                """
+                <PassengerStopAssignment id="TST:PassengerStopAssignment:$it" version="1" order="1">
+                  <ScheduledStopPointRef ref="TST:ScheduledStopPoint:$it" version="1"/>
+                  <QuayRef ref="NSR:Quay:$it"/>
+                </PassengerStopAssignment>
+                """.trimIndent()
+            }
+        val links =
+            linkedPairs.joinToString("\n") { (from, to) ->
+                """
+                <ServiceLink id="TST:ServiceLink:$from-$to" version="1">
+                  <FromPointRef ref="TST:ScheduledStopPoint:$from" version="1"/>
+                  <ToPointRef ref="TST:ScheduledStopPoint:$to" version="1"/>
+                </ServiceLink>
+                """.trimIndent()
+            }
+        val points =
+            sequence.withIndex().joinToString("\n") { (i, stop) ->
+                """
+                <StopPointInJourneyPattern id="TST:StopPointInJourneyPattern:${i + 1}" version="1" order="${i + 1}">
+                  <ScheduledStopPointRef ref="TST:ScheduledStopPoint:$stop" version="1"/>
+                </StopPointInJourneyPattern>
+                """.trimIndent()
+            }
+        return """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PublicationDelivery xmlns="http://www.netex.org.uk/netex" version="1.0">
+              <dataObjects><CompositeFrame id="TST:CompositeFrame:1" version="1"><frames>
+                <ServiceFrame id="TST:ServiceFrame:1" version="1">
+                  <lines><Line id="TST:Line:1" version="1"><TransportMode>$mode</TransportMode></Line></lines>
+                  <routes><Route id="TST:Route:1" version="1"><LineRef ref="TST:Line:1" version="1"/></Route></routes>
+                  <scheduledStopPoints>$stops</scheduledStopPoints>
+                  <stopAssignments>$assignments</stopAssignments>
+                  <serviceLinks>$links</serviceLinks>
+                  <journeyPatterns>
+                    <JourneyPattern id="TST:JourneyPattern:1" version="1">
+                      <RouteRef ref="TST:Route:1" version="1"/>
+                      <pointsInSequence>$points</pointsInSequence>
+                    </JourneyPattern>
+                  </journeyPatterns>
+                </ServiceFrame>
+              </frames></CompositeFrame></dataObjects>
+            </PublicationDelivery>
+            """.trim().toByteArray()
+    }
+
+    private fun zipOf(vararg entries: Pair<String, ByteArray>): ByteArray =
+        ByteArrayOutputStream()
+            .also { buf ->
+                ZipOutputStream(buf).use { zos ->
+                    for ((name, bytes) in entries) {
+                        zos.putNextEntry(ZipEntry(name))
+                        zos.write(bytes)
+                        zos.closeEntry()
+                    }
+                }
+            }.toByteArray()
+
+    /** Answers every NSR lookup from [quayCoordinates], except [transient] quays, and records what was asked. */
+    private fun stubNsr(transient: Set<String> = emptySet()): MutableList<Set<String>> {
+        val requests = mutableListOf<Set<String>>()
+        coEvery { mockNsrService.lookupQuayCoordinates(any<Collection<String>>()) } answers {
+            val quays = firstArg<Collection<String>>().toSet()
+            requests.add(quays)
+            NsrLookupResult(quayCoordinates.filterKeys { it in quays && it !in transient }, quays intersect transient)
+        }
+        return requests
+    }
+
+    @Test
+    fun `ZIP where every pair already has a ServiceLink looks up nothing in NSR`() =
+        runTest {
+            stubNsr()
+            val zip = zipOf("line.xml" to buildNsrBackedNetex(listOf("A", "B", "C"), listOf("A" to "B", "B" to "C")))
+
+            val (_, addedCount) = serviceLinkProducerService.processZipDirectly(zip, modesFilter = setOf("WATER"))
+
+            assertEquals(0, addedCount)
+            coVerify(exactly = 0) { mockNsrService.lookupQuayCoordinates(any<Collection<String>>()) }
+        }
+
+    @Test
+    fun `ZIP looks up only the endpoints of pairs without a ServiceLink`() =
+        runTest {
+            val requests = stubNsr()
+            // Links and stops spread over two files, as in a shared-data + line-file dataset
+            val zip =
+                zipOf(
+                    "_shared_data.xml" to buildNsrBackedNetex(listOf("A", "B", "C", "D"), listOf("A" to "B", "B" to "C")),
+                    "line.xml" to buildNsrBackedNetex(listOf("A", "B", "C", "D"), emptyList()),
+                )
+
+            val (_, addedCount) = serviceLinkProducerService.processZipDirectly(zip)
+
+            assertEquals(1, addedCount, "Only C -> D needs a new ServiceLink")
+            assertEquals(listOf(setOf("NSR:Quay:C", "NSR:Quay:D")), requests)
+        }
+
+    @Test
+    fun `ZIP still looks up mode-filtered pairs because they get a straight-line ServiceLink`() =
+        runTest {
+            val requests = stubNsr()
+            val zip = zipOf("line.xml" to buildNsrBackedNetex(listOf("A", "B"), emptyList(), mode = "bus"))
+
+            val (_, addedCount) = serviceLinkProducerService.processZipDirectly(zip, modesFilter = setOf("WATER"))
+
+            assertEquals(1, addedCount, "A mode-filtered pair still gets a straight-line ServiceLink")
+            assertEquals(listOf(setOf("NSR:Quay:A", "NSR:Quay:B")), requests)
+            coVerify(exactly = 0) { mockOsrmService.calculateRoute(any(), any(), any()) }
+        }
+
+    @Test
+    fun `ZIP integrity failure is retryable when a needed quay was throttled`() =
+        runTest {
+            stubNsr(transient = setOf("NSR:Quay:C"))
+            val zip = zipOf("line.xml" to buildNsrBackedNetex(listOf("A", "B", "C"), listOf("A" to "B")))
+
+            val e =
+                assertFailsWith<IncompleteJourneyPatternException> {
+                    serviceLinkProducerService.processZipDirectly(zip)
+                }
+
+            assertTrue(e.retryable, "A throttled quay behind the missing pair must make the run retryable")
+            assertEquals(
+                listOf(MissingPair("TST:JourneyPattern:1", "TST:ScheduledStopPoint:B", "TST:ScheduledStopPoint:C")),
+                e.missingPairs,
+            )
+            assertTrue(e.message!!.contains("NSR:Quay:C"))
+            assertFalse(e.message!!.contains("NSR:Quay:A"), "A stop skipped for lookup is on no missing pair and must not be reported")
+        }
+
+    @Test
+    fun `ZIP integrity failure is not retryable when a needed quay is absent from NSR`() =
+        runTest {
+            stubNsr()
+            val zip = zipOf("line.xml" to buildNsrBackedNetex(listOf("A", "B", "E"), listOf("A" to "B")))
+
+            val e =
+                assertFailsWith<IncompleteJourneyPatternException> {
+                    serviceLinkProducerService.processZipDirectly(zip)
+                }
+
+            assertFalse(e.retryable)
+        }
+
+    @Test
+    fun `single XML where every pair already has a ServiceLink looks up nothing in NSR`() =
+        runTest {
+            stubNsr()
+            val xml = String(buildNsrBackedNetex(listOf("A", "B", "C"), listOf("A" to "B", "B" to "C")))
+
+            val result = serviceLinkProducerService.processXmlContentDirectly(xml, "line.xml", modesFilter = setOf("WATER"))
+
+            assertTrue(result.success, result.errorMessage)
+            assertEquals(0, result.addedServiceLinksCount)
+            coVerify(exactly = 0) { mockNsrService.lookupQuayCoordinates(any<Collection<String>>()) }
+        }
+
+    @Test
+    fun `single XML looks up only the endpoints of pairs without a ServiceLink`() =
+        runTest {
+            val requests = stubNsr()
+            val xml = String(buildNsrBackedNetex(listOf("A", "B", "C", "D"), listOf("A" to "B", "B" to "C")))
+
+            val result = serviceLinkProducerService.processXmlContentDirectly(xml, "line.xml")
+
+            assertTrue(result.success, result.errorMessage)
+            assertEquals(1, result.addedServiceLinksCount)
+            assertEquals(listOf(setOf("NSR:Quay:C", "NSR:Quay:D")), requests)
         }
 
     @Test
