@@ -142,9 +142,16 @@ class ServiceLinkProducerService(
             }
         }
 
-        // Enrich: resolve coordinates via NSR for stops with an assignment but no inline coordinates
+        // Enrich: resolve coordinates via NSR for stops with an assignment but no inline coordinates,
+        // limited to endpoints of pairs that still need a ServiceLink
         MDC.put("stage", "processing/enrich")
-        val enrichment = enrichStopPointsViaNsr(allStopPoints, allStopAssignments, stopVersions)
+        val enrichment =
+            enrichStopPointsViaNsr(
+                allStopPoints,
+                allStopAssignments,
+                stopRefsOfUnlinkedPairs(rawPairRefs, existingServiceLinksGlobal),
+                stopVersions,
+            )
         val enrichedStopPoints = enrichment.stopPoints
 
         logger.info(
@@ -319,7 +326,7 @@ class ServiceLinkProducerService(
         try {
             val doc = metadataExtractor.extract(NetexProcessor.SINGLE_DOC_NAME, xmlData)
             val stops = doc.stopPoints.associateBy { it.id }
-            enrichStopPointsViaNsr(stops, doc.assignments)
+            enrichStopPointsViaNsr(stops, doc.assignments, stopRefsOfUnlinkedPairs(doc.rawPairRefs(), doc.existingServiceLinks))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -327,14 +334,40 @@ class ServiceLinkProducerService(
             Enrichment(emptyMap(), emptySet())
         }
 
+    /**
+     * Stop refs that are an endpoint of at least one pair without an existing ServiceLink. Only
+     * these need coordinates. Mode-filtered pairs are included on purpose: they still get a
+     * straight-line ServiceLink (see [NetexProcessor.routePairs]), which needs both endpoints.
+     */
+    private fun stopRefsOfUnlinkedPairs(
+        rawPairRefs: Map<String, RawPairRef>,
+        existingServiceLinks: Map<String, String>,
+    ): Set<String> =
+        buildSet {
+            for ((pairKey, ref) in rawPairRefs) {
+                if (pairKey !in existingServiceLinks) {
+                    add(ref.fromRef)
+                    add(ref.toRef)
+                }
+            }
+        }
+
     private suspend fun enrichStopPointsViaNsr(
         stopPoints: Map<String, StopPoint>,
         stopAssignments: Map<String, String>,
+        neededStopRefs: Set<String>,
         stopVersions: Map<String, String> = emptyMap(),
     ): Enrichment {
         val enriched = stopPoints.toMutableMap()
 
-        val toLookup = stopAssignments.filterKeys { it !in enriched }
+        val withoutCoordinates = stopAssignments.filterKeys { it !in enriched }
+        val toLookup = withoutCoordinates.filterKeys { it in neededStopRefs }
+        if (toLookup.size < withoutCoordinates.size) {
+            logger.info(
+                "NSR enrichment: skipping {} stops with no pair needing a new ServiceLink",
+                withoutCoordinates.size - toLookup.size,
+            )
+        }
         if (toLookup.isEmpty()) return Enrichment(enriched, emptySet())
 
         val lookup = nsrService.lookupQuayCoordinates(toLookup.values)
