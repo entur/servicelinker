@@ -77,6 +77,12 @@ See [docs/development-and-operations.md](docs/development-and-operations.md) for
 
 All OSRM instances expose `/route/v1/driving/` -- the correct routing comes from the network data loaded in each instance.
 
+## Deployment
+
+Helm, Terraform and deploys live in the internal
+`entur/servicelinker-deployment-config`. A push to `main` here builds the
+image and hands it over to a deploy there.
+
 ## Dependencies
 
 - Spring Boot 4.0.2
