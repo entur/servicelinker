@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: entur/ror-gha-workflows/.github/actions/gradle-cache@cd8dd047eb3a5d9497f46454a5c60315a62c6a66 # v1.2.2
+      - uses: entur/ror-gha-workflows/.github/actions/gradle-cache@bcb38e4a307aa0f2a11777b99f35eb3ee080f2e0 # v1.4.0
         with:
           java-version: '25'
 
