@@ -17,5 +17,6 @@ ENTRYPOINT ["java", \
   "-XX:MaxDirectMemorySize=768m", \
   "-XX:+UseG1GC", \
   "-XX:+ExitOnOutOfMemoryError", \
+  "-XX:-UseBASE64Intrinsics", \
   "--enable-native-access=ALL-UNNAMED", \
   "-jar", "app.jar"]
